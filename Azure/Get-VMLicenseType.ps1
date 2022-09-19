@@ -29,9 +29,9 @@ at https://www.microsoft.com/en-us/legal/copyright.
    -NotHybridBenefit
    -EnableHybridBenefit
 .OUTPUTS
-   Version output to screen
+    output to screen
 .NOTES
-    Name: VMLicenseType.ps1
+    Name: Get-VMLicenseType.ps1
     Authors/Contributors: Nick OConnor
     DateCreated: 9/17/2022
     Revisions:
