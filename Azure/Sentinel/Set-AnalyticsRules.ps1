@@ -57,26 +57,26 @@ function Install-Module-If-Needed {
 
 switch ($Environment) {
   AzureCloud {
-    $CloudURI = "https://management.azure.com/"
+    $CloudURI = "https://management.azure.com"
     $ConnectParam = @{Environment = "AzureCloud"
       ErrorAction                 = "Stop"
     }
   }
   AzureUSGovernment {
-    $CloudURI = "https://management.usgovcloudapi.net/"
+    $CloudURI = "https://management.usgovcloudapi.net"
     $ConnectParam = @{Environment = "AzureUSGovernment"
       ErrorAction                 = "Stop"
     }
   }
   AGC1 {
-    $CloudURI = "https://management.azure.com/"
+    $CloudURI = "https://management.azure.com"
     Add-AzEnvironment -AutoDiscover -uri https://management.azure.microsoft.x/metadata/endpoints?api-version=2020-06-01
     $ConnectParam = @{Environment = "AGC1"
       ErrorAction                 = "Stop"
     }
   }
   AGC2 {
-    $CloudURI = "https://management.azure.com/"
+    $CloudURI = "https://management.azure.com"
     Add-AzEnvironment -AutoDiscover -uri https://management.azure.microsoft.x/metadata/endpoints?api-version=2020-06-01
     $ConnectParam = @{Environment = "AGC2"
       ErrorAction                 = "Stop"
