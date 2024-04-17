@@ -91,7 +91,7 @@ Install-Module-If-Needed Az.Accounts
 #! Check Azure Connection
 Try {
   Write-Verbose "Connecting to Azure Cloud..."
-  Connect-AzAccount @ConnectParam | Out-Null
+  Connect-AzAccount $ConnectParam | Out-Null
 }
 Catch {
   Write-Warning "Cannot connect to Azure Cloud. Please check your credentials. Exiting!"
