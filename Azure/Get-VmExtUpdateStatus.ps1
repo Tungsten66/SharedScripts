@@ -169,7 +169,7 @@ foreach ($subscription in $subscriptions) {
 # Output the results to the screen
 $results | Format-Table -AutoSize
 # Export the results to a CSV file
-if ($POutputReport) {
+if ($OutputReport) {
     $results | Export-Csv -Path "vmExtensionUpgradeStatus.csv" -NoTypeInformation
     Write-Output "Report generated: vmExtensionUpgradeStatus.csv"
 }
