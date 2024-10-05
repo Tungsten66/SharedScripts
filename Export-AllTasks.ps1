@@ -31,7 +31,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
    
 .NOTES
     Name: Export-AllTasks.ps1
-    Authors/Contributors: Nick OConnor
+    Authors/Contributors: Tungsten66
     DateCreated: 7/30/2021
     Revisions:
 #>

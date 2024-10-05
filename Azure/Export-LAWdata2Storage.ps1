@@ -36,7 +36,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
    A log file will be created with the status of the export of a working directory of c:\temp
 .NOTES
     Name: ExportLAWdata2Storage.ps1
-    Authors/Contributors: Nick OConnor
+    Authors/Contributors: Tungsten66
     DateCreated: 8/28/2024
     Revisions:
 #>

@@ -33,7 +33,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
    Version output to screen
 .NOTES
     Name: Get-VMImageVersion-1(2016-Datacenter).ps1
-    Authors/Contributors: Nick OConnor
+    Authors/Contributors: Tungsten66
     DateCreated: 6/9/2021
     Revisions:
 #>

@@ -32,7 +32,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     output to screen
 .NOTES
     Name: Get-VMLicenseType.ps1
-    Authors/Contributors: Nick OConnor
+    Authors/Contributors: Tungsten66
     DateCreated: 9/17/2022
     Revisions:
 #>

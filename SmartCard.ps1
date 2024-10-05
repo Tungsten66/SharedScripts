@@ -39,7 +39,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
    An ActionLog for the function will provide what the script has done in the scripts location called SmartCard_action.log
 .NOTES
     Name: SmartCard.ps1
-    Authors/Contributors:Nick OConnor
+    Authors/Contributors: Tungsten66
     DateCreated: 11/2/2017
     Revisions:
 #>
