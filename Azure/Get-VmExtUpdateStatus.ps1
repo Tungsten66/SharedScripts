@@ -22,7 +22,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
 
 <#
 .SYNOPSIS
-    Get Azure VM extensions and if enabled for automatic upgrade
+    Get Azure VMs and ARC machine extensions and if enabled for automatic upgrade
 .DESCRIPTION
     Reports all VM extensions and if they are enabled for automatic upgrade.
     If the -EnableAutomaticUpgrade switch is used, the script will enable automatic upgrade for all extensions.
@@ -35,10 +35,6 @@ at https://www.microsoft.com/en-us/legal/copyright.
     -OutputReport
 .OUTPUTS
     output to screen and optional CSV file
-
-.TODO
-    Add support for Azure Arc enabled servers
-
 .NOTES
     Name: Get-VmExtUpdateStatus.ps1
     Authors/Contributors: Tungsten66, DCODEV1702
@@ -59,7 +55,8 @@ $context = Get-AzContext
 if ($null -eq $context) {
     # Login to Azure
     Connect-AzAccount
-} else {
+}
+else {
     $currentAccount = $context.Account
     $continue = Read-Host "You are already logged in as $($currentAccount.Id). Do you want to continue using this account? (Y/N)"
     if ($continue -ne 'Y') {
@@ -70,8 +67,6 @@ if ($null -eq $context) {
 
 # Get all subscriptions
 $subscriptions = Get-AzSubscription
-$subscriptions = $subscriptions[1] # Just hardcoding to my main subscription for now
-
 
 # Initialize arrays to store the results
 $vms = @()
@@ -80,19 +75,10 @@ $results = @()
 
 foreach ($subscription in $subscriptions) {
     # Set the current subscription context and suppress output
-    Set-AzContext -SubscriptionId $($subscription).Id # | Out-Null
+    Set-AzContext -SubscriptionId $($subscription).Id | Out-Null
 
     # Get all VMs in the current subscription
-    # $vms = Get-AzVM -Status
-
-    # Just adding a few VMs for testing
-    $vms += (Get-AzVM -Name 'squid-piab' -Status)
-    $vms += (Get-AzVM -Name 'Rocky8-0' -Status)
-    $vms += (Get-AzVM -Name 'childdc3' -Status)
-    $vms += (Get-AzVM -Name 'childdc4' -Status)
-    $vms += (Get-AzConnectedMachine -ResourceGroupName sec_telem_law_1 -SubscriptionId (Get-AzContext).Subscription.Id -Name 'SVR22-PROX-DC-1')
-    $vms += (Get-AzConnectedMachine -ResourceGroupName sec_telem_law_1 -SubscriptionId (Get-AzContext).Subscription.Id -Name 'RHEL8-HYPRV-CMRL-AMA-00')
-
+    $vms = Get-AzVM -Status
 
     foreach ($vm in $vms) {
 
@@ -102,18 +88,19 @@ foreach ($subscription in $subscriptions) {
         
             if ($vm.Type -eq 'Microsoft.Compute/virtualMachines') {
                 # Get all extensions for the current Azure VM
-                Write-Host "Fantastic! Azure VM '$($vm.Name)' is running. Lets evaluate the status of its extensions!" -ForegroundColor Cyan
+                Write-Host "Azure VM '$($vm.Name)' is running. Lets evaluate the status of its extensions!" -ForegroundColor Cyan
                 $extensions = Get-AzVMExtension -ResourceGroupName $vm.ResourceGroupName -VMName $vm.Name
-            } else {
+            }
+            else {
                 # Get all extensions for the current Azure Arc VM
-                Write-Host "Fantastic! Azure Arc VM '$($vm.Name)' is running. Lets evaluate the status of its extensions!" -ForegroundColor Cyan
+                Write-Host "Azure Arc machine '$($vm.Name)' is running. Lets evaluate the status of its extensions!" -ForegroundColor Cyan
                 $extensions = Get-AzConnectedMachineExtension -ResourceGroupName $vm.ResourceGroupName -MachineName $vm.Name
             }
             
             foreach ($extension in $extensions) {
 
                 # Enable automatic upgrade for the extension if the switch is used
-                if ($PSBoundParameters.ContainsKey('EnableAutomaticUpgrade')) {
+                if (EnableAutomaticUpgrade) {
 
                     # Check if the extension is already configured for automatic upgrade, and if not, enable it
                     if (-not ($extension.EnableAutomaticUpgrade)) {
@@ -122,17 +109,20 @@ foreach ($subscription in $subscriptions) {
                                 # Enable automatic upgrade for eligible extension(s)
                                 Set-AzVMExtension -Publisher $extension.Publisher -ExtensionType $extension.ExtensionType -ResourceGroupName $vm.ResourceGroupName -VMName $vm.Name -Name $extension.Name -EnableAutomaticUpgrade $true -ErrorAction Stop | Out-Null
                                 Write-Host "Automatic upgrade enabled for Azure VM '$($vm.Name)' and extension '$($extension.Name)' in resource group '$($vm.ResourceGroupName)'." -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 # Enable automatic upgrade for eligible extension(s)
                                 Set-AzConnectedMachineExtension -Publisher $extension.Publisher -ExtensionType $extension.ExtensionType -ResourceGroupName $vm.ResourceGroupName -MachineName $vm.Name -Name $extension.Name -EnableAutomaticUpgrade $true -ErrorAction Stop | Out-Null
-                                Write-Host "Automatic upgrade enabled for Azure Arc VM '$($vm.Name)' and extension '$($extension.Name)' in resource group '$($vm.ResourceGroupName)'." -ForegroundColor Green
+                                Write-Host "Automatic upgrade enabled for Azure Arc Machine '$($vm.Name)' and extension '$($extension.Name)' in resource group '$($vm.ResourceGroupName)'." -ForegroundColor Green
                             }
                             
-                        } catch {
+                        }
+                        catch {
                             # Handle the specific error for unsupported operations
                             if ($_.Exception.Message -like "*does not support setting enableAutomaticUpgrade property to true*") {
                                 Write-Host "Error: Automatic upgrade cannot be enabled for VM '$($vm.Name)' for VM extension '$($extension.Name)' in subscription '$($subscription.Name)'. This extension does not support this feature." -ForegroundColor Yellow
-                            } else {
+                            }
+                            else {
                                 # Handle other exceptions
                                 Write-Host "An unexpected error occurred: $($_.Exception.Message)" -ForegroundColor Red
                             }
@@ -151,11 +141,13 @@ foreach ($subscription in $subscriptions) {
                     Environment            = ($vm.Type -eq 'Microsoft.Compute/virtualMachines') ? $CloudEnvironment : 'Azure Arc'
                 }
             }
-        } else {
+        }
+        else {
             
             if ($vm.Type -eq 'Microsoft.Compute/virtualMachines') {
                 Write-Host "Azure VM '$($vm.Name)' is not running. Skipping evaluation of its extensions." -ForegroundColor Yellow
-            } else {
+            }
+            else {
                 Write-Host "Azure Arc VM '$($vm.Name)' is not running. Skipping evaluation of its extensions." -ForegroundColor Yellow
             }
 
@@ -177,7 +169,7 @@ foreach ($subscription in $subscriptions) {
 # Output the results to the screen
 $results | Format-Table -AutoSize
 # Export the results to a CSV file
-if ($PSBoundParameters.ContainsKey('OutputReport')) {
+if ($POutputReport) {
     $results | Export-Csv -Path "vmExtensionUpgradeStatus.csv" -NoTypeInformation
     Write-Output "Report generated: vmExtensionUpgradeStatus.csv"
 }
