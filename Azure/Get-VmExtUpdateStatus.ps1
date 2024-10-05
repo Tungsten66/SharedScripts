@@ -100,7 +100,7 @@ foreach ($subscription in $subscriptions) {
             foreach ($extension in $extensions) {
 
                 # Enable automatic upgrade for the extension if the switch is used
-                if (EnableAutomaticUpgrade) {
+                if ($EnableAutomaticUpgrade) {
 
                     # Check if the extension is already configured for automatic upgrade, and if not, enable it
                     if (-not ($extension.EnableAutomaticUpgrade)) {
@@ -148,7 +148,7 @@ foreach ($subscription in $subscriptions) {
                 Write-Host "Azure VM '$($vm.Name)' is not running. Skipping evaluation of its extensions." -ForegroundColor Yellow
             }
             else {
-                Write-Host "Azure Arc VM '$($vm.Name)' is not running. Skipping evaluation of its extensions." -ForegroundColor Yellow
+                Write-Host "Azure Arc Machine '$($vm.Name)' is not running. Skipping evaluation of its extensions." -ForegroundColor Yellow
             }
 
             # Add the result to the array
