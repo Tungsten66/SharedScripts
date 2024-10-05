@@ -42,8 +42,6 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Revisions:
 #>
 
-
-
 param(
     [string] [ValidateSet("AzureCloud", "AzureUSGovernment")]
     $CloudEnvironment = "AzureCloud",
