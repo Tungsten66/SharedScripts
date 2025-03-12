@@ -70,9 +70,9 @@ foreach ($csvRow in $csvData) {
     # & character needs to be escaped in xml; replacing it with &amp;
     # Replace the last digit in InstancePathId with a wildcard to account for variable USB slot numbers
     if ($csvRow.InstancePathId -like 'USBSTOR*') {
-        $newElement.InnerText = ($csvRow.InstancePathId -replace '\d$', '*') -replace '&', '&amp;'
+        $newElement.InnerText = ($csvRow.InstancePathId -replace '\d$', '*')
     } else {
-        $newElement.InnerText = $csvRow.InstancePathId -replace '&', '&amp;'
+        $newElement.InnerText = $csvRow.InstancePathId
     }
     $descriptorIdList.AppendChild($newElement)
 }
