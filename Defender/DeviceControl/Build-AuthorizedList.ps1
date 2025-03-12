@@ -66,7 +66,6 @@ if ($null -ne $descriptorIdList) {
 
 # Add each InstancePathId from the CSV to the DescriptorIdList
 foreach ($csvRow in $csvData) {
-    $newElement = $null
     $newElement = $xmlData.CreateElement("InstancePathId")
     # & character needs to be escaped in xml; replacing it with &amp;
     # Replace the last digit in InstancePathId with a wildcard to account for variable USB slot numbers
