@@ -24,9 +24,11 @@ at https://www.microsoft.com/en-us/legal/copyright.
 .SYNOPSIS
    Build an XML file from a CSV file containing USB device InstancePathId values.
 .DESCRIPTION
-   This script reads a CSV file containing USB device InstancePathId values and builds an XML file with these values.
-   The script replaces the last digit in each InstancePathId with a wildcard (*) to account for variable USB slot numbers.
-   It also escapes the '&' character in the InstancePathId values to ensure valid XML formatting.
+    Building an XML file of authorized USB devices from a CSV file for -
+    https://github.com/microsoft/mdatp-devicecontrol/blob/main/windows/Getting%20Started/allow_different_access_to_different_users_rules.md#intune-custom-settings
+    This script reads a CSV file containing USB device InstancePathId values and builds an XML file with these values.
+    The script replaces the last digit in each InstancePathId with a wildcard (*) to account for variable USB slot numbers.
+    It also escapes the '&' character in the InstancePathId values to ensure valid XML formatting.
 .INPUTS
     The script takes a CSV file as input, which should contain a column named 'InstancePathId'.
     The CSV file is expected to be located at "C:\Temp\AuthorizedUSBs.csv".
