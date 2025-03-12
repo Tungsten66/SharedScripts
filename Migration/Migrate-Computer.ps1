@@ -40,7 +40,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
    
 .NOTES
     Name: Migrate-Computer.ps1
-    Authors/Contributors: Nick OConnor
+    Authors/Contributors: Tungsten66
     DateCreated: 3/15/2021
     Revisions:
 #> 

@@ -36,7 +36,7 @@ at https://www.microContosot.com/en-us/legal/copyright.
    
 .NOTES
     Name: Update-UserPostMigration.ps1
-    Authors/Contributors: Nick OConnor
+    Authors/Contributors: Tungsten66
     DateCreated: 8/19/2021
     Revisions:
 #>
