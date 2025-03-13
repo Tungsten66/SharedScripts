@@ -60,6 +60,17 @@ catch {
     exit 1
 }
 
+# Clear existing comments in the XML file
+$comments = $xmlData.SelectNodes("//comment()")
+foreach ($comment in $comments) {
+    $comment.ParentNode.RemoveChild($comment) | Out-Null
+}
+
+# Add a comment in the XML file
+$timestamp = Get-Date -Format "yyyy-MM-ddTHH:mm:ss"
+$comment = $xmlData.CreateComment("File Created: $timestamp")
+$xmlData.DocumentElement.AppendChild($comment)
+
 # Clear existing elements in DescriptorIdList
 $descriptorIdList = $xmlData.SelectSingleNode("//DescriptorIdList")
 if ($null -ne $descriptorIdList) {
