@@ -38,21 +38,54 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Revisions:
 #>
 
-
-
 #Variables
 $domain = Get-ADDomain
 $PDCe = $domain.PDCEmulator
 $DNSprivateResolver = Read-Host -Prompt "Enter the IP address of the Azure DNS private resolver"
-$ZoneNames = @(
-    "monitor.azure.com", 
-    "oms.opinsights.azure.com", 
-    "ods.opinsights.azure.com", 
-    "agentsvc.azure-automation.net", 
-    "blob.core.windows.net", 
-    "services.visualstudio.com",
-    "applicationinsights.azure.com"
-)
+$SetCloudEnv  = @("AzureCloud","AzureUSGovernment")  #Cloud Environment List
+
+# Set your cloud environment: (AzureCloud, AzureUSGovernment)
+Write-Host "`nGreetings! Please select your cloud environment: " -ForegroundColor Yellow
+Write-Host "1. AzureCloud" -ForegroundColor Cyan
+Write-Host "2. AzureUSGovernment" -ForegroundColor Cyan
+$selection = Read-Host -Prompt "Enter the number corresponding to your cloud environment (1 or 2)"
+
+switch ($selection) {
+    1 { $SetCloudEnv = "AzureCloud" }
+    2 { $SetCloudEnv = "AzureUSGovernment" }
+    default {
+        Write-Host "Invalid selection. Exiting script." -ForegroundColor Red
+        exit
+    }
+}
+
+if ($SetCloudEnv -eq "AzureCloud") {
+    # Commercial Cloud Zones
+    $ZoneNames = @(
+        "monitor.azure.com", 
+        "oms.opinsights.azure.com", 
+        "ods.opinsights.azure.com", 
+        "agentsvc.azure-automation.net", 
+        "blob.core.windows.net", 
+        "services.visualstudio.com",
+        "applicationinsights.azure.com"
+    )
+    Write-Host "You selected AzureCloud. Using Commercial Cloud Zones." -ForegroundColor Green
+} elseif ($SetCloudEnv -eq "AzureUSGovernment") {
+    # Government Cloud Zones
+    $ZoneNames = @(
+        "monitor.azure.us", 
+        "adx.monitor.azure.us",
+        "oms.opinsights.azure.us",
+        "ods.opinsights.azure.us",
+        "agentsvc.azure-automation.us",
+        "blob.core.usgovcloudapi.net"
+    )
+    Write-Host "You selected AzureUSGovernment. Using Government Cloud Zones." -ForegroundColor Green
+} else {
+    Write-Host "Invalid cloud environment selected. Exiting script." -ForegroundColor Red
+    exit
+}
 
 # Add the Azure DNS private resolver as a conditional forwarder to the PDC emulator
 foreach ($ZoneName in $ZoneNames) {
