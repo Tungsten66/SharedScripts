@@ -40,7 +40,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Name:Apply-Policy.ps1
     Authors/Contributors:Tungsten66
     DateCreated: 6/20/2025
-    Revisions:1.0
+    Revisions:1.1 - 6/23/2025 added $RefreshExeAdmShare  
 #>
 
 
@@ -68,6 +68,8 @@ $logFile = "\\lab-ap1\artifacts\AppControl\Logs\PolicyDeploymentLog.txt"
 $RefreshExeSource = "\\lab-ap1\artifacts\AppControl\RefreshPolicy.exe"
 ## Define RefreshPolicy.exe file location on Remote computer
 $RefreshExe = "C:\_Hold\RefreshPolicy.exe"
+# Replace C:\ with C$\
+$RefreshExeAdmShare = $RefreshExe -replace '^C:\\', 'C$\'
 
 ## Define the security group for adding servers that are exempt from enforcement policy for specific time
 $ExemptionGroup = "AppControl-ServerExemption"
@@ -157,7 +159,7 @@ if (-not $Mode) {
                 }
 
                 if (-Not $fileExists) {
-                    Copy-Item -Path $RefreshExeSource -Destination "\\$computer\C$\_Hold\RefreshPolicy.exe"
+                    Copy-Item -Path $RefreshExeSource -Destination "\\$computer\$RefreshExeAdmShare"
                 }
 
                 # Now invoke the command
