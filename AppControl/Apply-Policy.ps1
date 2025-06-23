@@ -40,7 +40,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Name:Apply-Policy.ps1
     Authors/Contributors:Tungsten66
     DateCreated: 6/20/2025
-    Revisions:1.1 - 6/23/2025 added $RefreshExeAdmShare  
+    Revisions:1.2 - 6/23/2025 added security group reporting
 #>
 
 
@@ -205,3 +205,18 @@ if (-not $Mode) {
     }
 
 }
+
+# uncomment if you want to show security group membership after each run
+<#
+$group = Get-ADGroup $ExemptionGroup -Properties member -ShowMemberTimeToLive
+
+foreach ($entry in $group.member) {
+    if ($entry -match '<TTL=(\d+)>,(CN=[^,]+)') {
+        $ttlSeconds = [int]$matches[1]
+        $ttlDays = [math]::Round($ttlSeconds / 86400, 2)  # 86400 seconds in a day
+        $cn = $matches[2] -replace '^CN='
+        Write-Output "TTL: $ttlDays days | Computer: $cn"
+    }
+}
+
+#>
