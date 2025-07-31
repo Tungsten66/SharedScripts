@@ -39,7 +39,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     ScriptName: Set-AwsArcComputerNameTag.ps1
     Authors/Contributors: Tungsten66
     DateCreated: 7/29/2025
-    Revisions:
+    Revisions: v1.1 added minimum permissions required
 #>
 
 param(
