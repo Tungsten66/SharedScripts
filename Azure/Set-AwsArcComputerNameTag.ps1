@@ -30,6 +30,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     It scans for AWS Arc-enabled machines, checks if the "ComputerName" tag matches the OSProfile.ComputerName property, and applies the tag if needed.
     Machines already tagged with the correct value are skipped.
     Requires the Az.ConnectedMachine and Az.Resources PowerShell modules.
+    Minimum permissions required: Microsoft.HybridCompute/machines/read, Microsoft.Resources/tags/write.
 .INPUTS
     -CloudEnvironment
 .OUTPUTS
