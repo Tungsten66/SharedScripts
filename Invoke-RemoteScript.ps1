@@ -38,22 +38,6 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Revisions: 2025-09-27 - Initial version
 #>
 
-<#
-.SYNOPSIS
-    Executes a PowerShell script on a remote computer with optional cleanup.
-
-.DESCRIPTION
-    This script copies a local PowerShell script to a remote computer, executes it,
-    and optionally removes it after execution. Uses New-PSSession for connectivity
-    testing and all remote operations.
-
-.NOTES
-    Author: System Administrator
-    Date: 2025-09-27
-    Version: 2.0
-    Requirements: PowerShell 5.1+, WinRM enabled on target computer
-#>
-
 # Clear any previous errors
 $Error.Clear()
 
