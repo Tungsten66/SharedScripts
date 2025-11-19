@@ -1,3 +1,25 @@
+<##############################################################################
+LEGAL DISCLAIMER
+This Sample Code is provided for the purpose of illustration only and is not
+intended to be used in a production environment.  THIS SAMPLE CODE AND ANY
+RELATED INFORMATION ARE PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER
+EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR PURPOSE.  We grant You a
+nonexclusive, royalty-free right to use and modify the Sample Code and to
+reproduce and distribute the object code form of the Sample Code, provided
+that You agree: (i) to not use Our name, logo, or trademarks to market Your
+software product in which the Sample Code is embedded; (ii) to include a valid
+copyright notice on Your software product in which the Sample Code is embedded;
+and (iii) to indemnify, hold harmless, and defend Us and Our suppliers from and
+against any claims or lawsuits, including attorneys' fees, that arise or result
+from the use or distribution of the Sample Code.
+ 
+This posting is provided "AS IS" with no warranties, and confers no rights. Use
+of included script samples are subject to the terms specified
+at https://www.microsoft.com/en-us/legal/copyright.
+
+##############################################################################>
+
 <#
 .SYNOPSIS
     Lists all groups in a selected Administrative Unit with device counts.
@@ -5,41 +27,12 @@
 .DESCRIPTION
     This script connects to Microsoft Graph, allows you to select an Administrative Unit,
     and displays all groups within that AU including their Name, Object ID, and Device Count.
-    Results can be filtered by group name.
-
-.PARAMETER SearchName
-    Optional filter to search for groups by name (supports wildcards).
-
-.PARAMETER ClientId
-    Optional. The Application (Client) ID of your Azure AD App Registration.
-    Required when using app-based authentication with certificate.
-
-.PARAMETER TenantId
-    Optional. The Directory (Tenant) ID of your Azure AD tenant.
-    Required when using app-based authentication with certificate.
-
-.PARAMETER CertificateThumbprint
-    Optional. The thumbprint of the certificate uploaded to your App Registration.
-    Required when using app-based authentication with certificate.
-
-.EXAMPLE
-    .\Get-AdminUnitGroups.ps1
-    Lists all groups in the selected Administrative Unit using interactive authentication.
-
-.EXAMPLE
-    .\Get-AdminUnitGroups.ps1 -SearchName "Desktop*"
-    Lists groups whose names start with "Desktop" in the selected Administrative Unit.
-
-.EXAMPLE
-    .\Get-AdminUnitGroups.ps1 -ClientId "12345678-1234-1234-1234-123456789012" -TenantId "87654321-4321-4321-4321-210987654321" -CertificateThumbprint "ABC123DEF456..."
-    Uses app registration with certificate authentication to connect to Microsoft Graph.
-
-.PREREQUISITES
-    REQUIRED MODULE:
-    - Microsoft.Graph PowerShell module
+    Results can be filtered by group name and exported to CSV or HTML format.
+    
+    Supports both interactive delegated authentication and app-only authentication using
+    certificate-based authentication with an Azure AD App Registration.
     
     REQUIRED PERMISSIONS:
-    This script requires the following Microsoft Graph API permissions:
     - AdministrativeUnit.Read.All
     - Group.Read.All
     - GroupMember.Read.All
@@ -55,10 +48,7 @@
     6. Select the specific users or groups who need access
     7. Click 'Assign'
     8. Go to 'Permissions' in the left menu
-    9. Verify the required permissions are listed:
-       - AdministrativeUnit.Read.All
-       - Group.Read.All
-       - GroupMember.Read.All
+    9. Verify the required permissions are listed
     10. Click 'Grant admin consent for [Your Organization]' to approve these permissions
     11. Confirm the consent
     
@@ -73,13 +63,50 @@
     3. Grant admin consent for the app
     4. Generate and upload a certificate for authentication
     5. Note the Application (Client) ID, Directory (Tenant) ID, and Certificate Thumbprint
-    6. Run the script with app authentication parameters:
-       .\Get-AdminUnitGroups.ps1 -ClientId "YOUR-CLIENT-ID" -TenantId "YOUR-TENANT-ID" -CertificateThumbprint "YOUR-CERT-THUMBPRINT"
+    6. Run the script with app authentication parameters
+
+.PARAMETER
+    SearchName - Optional filter to search for groups by name (supports wildcards).
+    
+    ClientId - Optional. The Application (Client) ID of your Azure AD App Registration.
+               Required when using app-based authentication with certificate.
+    
+    TenantId - Optional. The Directory (Tenant) ID of your Azure AD tenant.
+               Required when using app-based authentication with certificate.
+    
+    CertificateThumbprint - Optional. The thumbprint of the certificate uploaded to your App Registration.
+                            Required when using app-based authentication with certificate.
+
+.INPUTS
+    None. This script does not accept pipeline input.
+
+.OUTPUTS
+    Displays results in Out-GridView and optionally exports to CSV and/or HTML files.
+
+.EXAMPLE
+    .\Get-AdminUnitGroups.ps1
+    
+    Lists all groups in the selected Administrative Unit using interactive authentication.
+
+.EXAMPLE
+    .\Get-AdminUnitGroups.ps1 -SearchName "Desktop*"
+    
+    Lists groups whose names start with "Desktop" in the selected Administrative Unit.
+
+.EXAMPLE
+    .\Get-AdminUnitGroups.ps1 -ClientId "12345678-1234-1234-1234-123456789012" -TenantId "87654321-4321-4321-4321-210987654321" -CertificateThumbprint "ABC123DEF456..."
+    
+    Uses app registration with certificate authentication to connect to Microsoft Graph.
 
 .NOTES
-    Author: [Your Name]
-    Version: 1.1
-    Last Updated: November 19, 2025
+    Name: Get-AdminUnitGroups.ps1
+    Authors/Contributors: Nick OConnor
+    DateCreated: November 18, 2025
+    Revisions: 
+        1.0 - Initial version with interactive authentication
+        1.1 - Added app registration support with certificate authentication
+              Added environment selection (Global, USGov, USGovDoD)
+              Added HTML export functionality
 #>
 
 [CmdletBinding()]
