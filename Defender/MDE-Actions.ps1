@@ -28,6 +28,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     PowerShell GUI tool for performing machine actions on MDE-enrolled devices.
     Supports both Azure Commercial and Azure Government clouds using OAuth 2.0 
     Device Code Flow authentication.
+    Reference: https://learn.microsoft.com/en-us/defender-endpoint/api/apis-intro
 
 .INPUTS
     None. Interactive GUI-based tool.
@@ -39,7 +40,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Name: MDE-Actions.ps1
     Authors/Contributors: Nick OConnor
     DateCreated: 11/14/2025
-    Revisions: Initial version
+    Revisions: 1.1 - added reference
     Requires: PowerShell 5.1 or higher
 #>
 
