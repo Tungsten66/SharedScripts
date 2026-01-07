@@ -56,7 +56,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     2. Configure Azure CLI for your cloud environment:
        - Commercial: az cloud set --name AzureCloud
        - USGovernment: az cloud set --name AzureUSGovernment
-    3. Login once at the start of your session: az login
+    3. Login once at the start of your session: az login or az login --use-device-code
     4. Run this script as many times as needed - no additional authentication required
     
     The script uses the existing Azure CLI session, eliminating repeated authentication prompts
