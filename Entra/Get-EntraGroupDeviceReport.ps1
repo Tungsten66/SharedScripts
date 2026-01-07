@@ -36,8 +36,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
       * Or install via winget: winget install -e --id Microsoft.AzureCLI
       * Restart PowerShell after installation
     - User logged in via 'az login'
-    - For GCC High: az cloud set --name AzureUSGovernment
-    
+    - For USGovernment: az cloud set --name AzureUSGovernment
     - PowerShell Modules (install if missing):
       * Microsoft.Graph.Authentication
       * Microsoft.Graph.Identity.DirectoryManagement
@@ -56,7 +55,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     1. Install Azure CLI if not already installed
     2. Configure Azure CLI for your cloud environment:
        - Commercial: az cloud set --name AzureCloud
-       - GCC High: az cloud set --name AzureUSGovernment
+       - USGovernment: az cloud set --name AzureUSGovernment
     3. Login once at the start of your session: az login
     4. Run this script as many times as needed - no additional authentication required
     
