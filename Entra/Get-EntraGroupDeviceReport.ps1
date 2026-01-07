@@ -127,8 +127,6 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Revisions: 
         1.0 - Initial version with interactive authentication
         1.1 - Added app registration support with certificate authentication
-              Added environment selection (Global, USGov, USGovDoD)
-              Added HTML export functionality
         2.0 - Simplified to use Azure CLI token authentication only
               Removed environment selection and certificate authentication
               Optimized for teams running multiple reports daily
