@@ -494,13 +494,12 @@ else {
     Write-Host "  [1] Display on screen" -ForegroundColor White
     Write-Host "  [2] Export to CSV" -ForegroundColor White
     Write-Host "  [3] Both" -ForegroundColor White
-    Write-Host "  [4] Skip" -ForegroundColor White
 
     do {
-        $viewChoice = Read-Host "`nSelect option (1-4)"
-        $viewChoiceValid = $viewChoice -match '^[1-4]$'
+        $viewChoice = Read-Host "`nSelect option (1-3)"
+        $viewChoiceValid = $viewChoice -match '^[1-3]$'
         if (-not $viewChoiceValid) {
-            Write-Host "Invalid selection. Please enter 1, 2, 3, or 4." -ForegroundColor Red
+            Write-Host "Invalid selection. Please enter 1, 2, or 3." -ForegroundColor Red
         }
     } while (-not $viewChoiceValid)
 
