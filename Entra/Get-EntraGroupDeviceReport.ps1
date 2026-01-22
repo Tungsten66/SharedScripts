@@ -244,7 +244,9 @@ if ($AdministrativeUnit) {
     $auNameSanitized = $auName.Replace("'", "''")
     
     # Get the Administrative Unit by name
-    Write-Host "`nSearching for Administrative Unit: '$auName'..." -ForegroundColor Cyan    Write-Verbose "Using OData filter: displayName eq '$auNameSanitized'"    try {
+    Write-Host "`nSearching for Administrative Unit: '$auName'..." -ForegroundColor Cyan
+    Write-Verbose "Using OData filter: displayName eq '$auNameSanitized'"
+    try {
         $selectedAdminUnit = Get-MgDirectoryAdministrativeUnit -Filter "displayName eq '$auNameSanitized'" -ErrorAction Stop
         
         if ($null -eq $selectedAdminUnit) {
@@ -263,7 +265,9 @@ if ($AdministrativeUnit) {
     }
     
     # Get all groups in the selected Administrative Unit
-    Write-Host "`nRetrieving groups from Administrative Unit..." -ForegroundColor Cyan    Write-Verbose "Querying AU members for ID: $($selectedAdminUnit.Id)"    try {
+    Write-Host "`nRetrieving groups from Administrative Unit..." -ForegroundColor Cyan
+    Write-Verbose "Querying AU members for ID: $($selectedAdminUnit.Id)"
+    try {
         $auGroups = Get-MgDirectoryAdministrativeUnitMember -AdministrativeUnitId $selectedAdminUnit.Id -All -ErrorAction Stop | 
             Where-Object { $_.AdditionalProperties.'@odata.type' -eq '#microsoft.graph.group' }
         
