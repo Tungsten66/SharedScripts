@@ -1,0 +1,29 @@
+{
+   "antivirusEngine": {
+      "enforcementLevel": "real_time",
+      "behaviorMonitoring": "enabled",
+      "enableFileHashComputation": true,
+      "exclusionsMergePolicy": "admin_only",
+      "threatTypeSettingsMergePolicy": "admin_only",
+      "threatTypeSettings": [
+         {
+            "key": "potentially_unwanted_application",
+            "value": "block"
+         },
+         {
+            "key": "archive_bomb",
+            "value": "audit"
+         }
+      ],
+      "scanArchives": true
+   },
+   "cloudService": {
+      "enabled": true,
+      "cloudBlockLevel": "high",
+      "automaticDefinitionUpdateEnabled": true,
+      "automaticSampleSubmissionConsent": "safe"
+   },
+   "networkProtection": {
+      "enforcementLevel": "block"
+   }
+}

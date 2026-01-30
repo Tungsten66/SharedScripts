@@ -42,7 +42,7 @@ function Test-IsAzureVM {
     try {
         $metadataUrl = 'http://169.254.169.254/metadata/instance?api-version=2021-02-01'
         $headers = @{Metadata = 'true'}
-        $response = Invoke-RestMethod -Method GET -Uri $metadataUrl -Headers $headers -TimeoutSec 2 -ErrorAction Stop
+        $null = Invoke-RestMethod -Method GET -Uri $metadataUrl -Headers $headers -TimeoutSec 2 -ErrorAction Stop
         return $true
     } catch {
         return $false
@@ -72,7 +72,7 @@ $scriptBlock = {
     try {
         $metadataUrl = 'http://169.254.169.254/metadata/instance?api-version=2021-02-01'
         $headers = @{Metadata = 'true'}
-        $response = Invoke-RestMethod -Method GET -Uri $metadataUrl -Headers $headers -TimeoutSec 2 -ErrorAction Stop
+        $null = Invoke-RestMethod -Method GET -Uri $metadataUrl -Headers $headers -TimeoutSec 2 -ErrorAction Stop
         $result.IsAzureVM = $true
     } catch {
         $result.IsAzureVM = $false
@@ -86,7 +86,7 @@ if ($isLocal) {
     Write-Host "Running local check..." -ForegroundColor Cyan
     $result = @{
         DefenderInstalled = (Get-WindowsFeature -Name Windows-Defender).Installed
-        DisableAntiSpywarePresent = (Get-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpyware" -ErrorAction SilentlyContinue).DisableAntiSpyware -ne $null
+        DisableAntiSpywarePresent = $null -ne (Get-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpyware" -ErrorAction SilentlyContinue).DisableAntiSpyware
         IsAzureVM = Test-IsAzureVM
     }
 } else {
