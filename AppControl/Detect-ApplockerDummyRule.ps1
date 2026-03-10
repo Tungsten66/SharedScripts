@@ -27,9 +27,11 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Detects an AppLocker "Dummy Rule" and clears AppLocker policies if found.
 
 .DESCRIPTION
-    Checks all AppLocker rule collections for a rule named "Dummy Rule".
-    If detected, clears all local AppLocker policies and stops AppLocker services
-    per Microsoft guidance:
+    If AppLocker is no longer needed, this script can be used to detect and remove
+    a "Dummy Rule" from the local AppLocker policy. It checks all AppLocker rule
+    collections for a rule named "Dummy Rule". If detected, it clears all local
+    AppLocker policies, stops the AppLocker services, and sets them to demand start.
+    Reference:
     https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/applocker/delete-an-applocker-rule
 
 .INPUTS
