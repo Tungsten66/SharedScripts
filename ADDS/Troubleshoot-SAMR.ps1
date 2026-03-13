@@ -45,9 +45,9 @@ at https://www.microsoft.com/en-us/legal/copyright.
 
 .NOTES
     Name: Troubleshoot-SAMR.ps1
-    Authors/Contributors:
+    Authors/Contributors: Nick OConnor
     DateCreated: 2026-03-13
-    Revisions:
+    Revisions: v1.0 - Initial script development
 
     Prerequisites:
     - Run from a domain-joined machine with RSAT tools installed
