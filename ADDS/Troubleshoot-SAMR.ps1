@@ -218,8 +218,11 @@ function Get-HighFrequencyRefresh {
 
     foreach ($pattern in $refreshPatterns) {
         if ($xmlText -match [regex]::Escape($pattern)) {
-            # Try to extract the numeric value
-            $valueMatch = [regex]::Match($xmlText, "$pattern.*?<Value>(\d+)</Value>")
+            # Try to extract the numeric value (handle namespace-prefixed elements like <q1:Value>)
+            $escapedPattern = [regex]::Escape($pattern)
+            $valueMatch = [regex]::Match($xmlText,
+                "$escapedPattern.*?<\w*:?Value>(\d+)</\w*:?Value>",
+                [System.Text.RegularExpressions.RegexOptions]::Singleline)
             $interval = if ($valueMatch.Success) { $valueMatch.Groups[1].Value } else { "Unknown" }
 
             # Default is 90 minutes; anything under 30 minutes is aggressive
@@ -585,14 +588,14 @@ else {
     Write-Host "  Low:    $lowCount`n" -ForegroundColor Gray
 
     # Summary by check type
-    Write-Host "─── Findings by Category ───" -ForegroundColor Cyan
+    Write-Host "--- Findings by Category ---" -ForegroundColor Cyan
     $allFindings | Group-Object -Property Check | Sort-Object Count -Descending | ForEach-Object {
         Write-Host "  $($_.Name): $($_.Count)" -ForegroundColor White
     }
     Write-Host ""
 
     # Detailed findings sorted by severity
-    Write-Host "─── Detailed Findings ───" -ForegroundColor Cyan
+    Write-Host "--- Detailed Findings ---" -ForegroundColor Cyan
     $severityOrder = @{ 'High' = 1; 'Medium' = 2; 'Low' = 3 }
     $sortedFindings = $allFindings | Sort-Object { $severityOrder[$_.Severity] }, GPOName
 
@@ -623,7 +626,7 @@ else {
 }
 
 # ── Recommendations ──────────────────────────────────────────────────────────
-Write-Host "─── Recommendations to Reduce SAMR Load ───" -ForegroundColor Cyan
+Write-Host "--- Recommendations to Reduce SAMR Load ---" -ForegroundColor Cyan
 Write-Host @"
   1. MINIMIZE ILT SECURITY GROUP CHECKS: Replace ILT security group targeting
      with OU-based targeting where possible. Each ILT group check = SAMR call.
