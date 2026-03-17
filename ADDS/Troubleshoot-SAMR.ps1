@@ -47,7 +47,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Name: Troubleshoot-SAMR.ps1
     Authors/Contributors: Nick OConnor
     DateCreated: 2026-03-13
-    Revisions: v1.0 - Initial script development
+    Revisions: v1.1 - Added checks for GP Preferences Replace actions; improved reporting format.
 
     Prerequisites:
     - Run from a domain-joined machine with RSAT tools installed
