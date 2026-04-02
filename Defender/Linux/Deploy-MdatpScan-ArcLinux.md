@@ -3,7 +3,7 @@
 This guide covers three methods for deploying a weekly Microsoft Defender for Endpoint (MDATP) quick scan schedule to Linux devices managed by Azure Arc:
 
 - **Method 1 — Arc Run Command**: Point-in-time deployment to machines that are online at the time the command runs. Does not cover machines onboarded after deployment.
-- **Method 2 — Azure Policy (DeployIfNotExists)**: Continuously enforced — covers all existing machines and any future machines onboarded to Arc. This is the recommended long-term solution.
+- **Method 2 — Azure Policy (DeployIfNotExists)**: Automatically deploys to all Arc Linux machines — current and future — and redeploys if a previous attempt failed.
 - **Method 3 — Azure Machine Configuration (Continuous Audit)**: Continuously verifies the cron entry is actually present on the machine on every policy evaluation cycle (~24 hours). Does not replace Method 2 — use alongside it when continuous tampering detection is required.
 
 **Recommended approach:** Use Method 2 (Azure Policy) as the primary solution for all environments. It automatically deploys to all current and future Arc-onboarded Linux machines with no additional action. Method 1 can be used for immediate ad-hoc deployment while policy propagates. Add Method 3 only if your environment requires continuous verification that the cron job has not been removed after deployment (e.g., compliance or insider threat requirements).
