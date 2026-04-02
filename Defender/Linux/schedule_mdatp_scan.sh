@@ -5,6 +5,17 @@
 #               on Linux using crontab. The scan runs every Sunday at a randomly
 #               generated time (chosen once when the script runs).
 #
+# Scope:
+#   This is the STANDALONE version of the scan scheduler. It is intended for:
+#     - Direct execution on a Linux host (see Usage below)
+#     - Arc Run Command deployment (Method 1 in Deploy-MdatpScan-ArcLinux.md),
+#       where Azure CLI references this file via --script "@schedule_mdatp_scan.sh"
+#
+#   The Azure Policy deployment (Method 2) uses a separate condensed inline script
+#   embedded directly in mdatp-scan-policy-arc.json. That inline script implements the
+#   same logic but is not sourced from this file. Refer to Deploy-MdatpScan-ArcLinux.md
+#   for full deployment guidance covering both methods.
+#
 # Features:
 #   - Generates random hour (0-11) and minute (0-59) for scan time
 #   - Idempotent: safe to run multiple times without creating duplicates
@@ -14,7 +25,7 @@
 # Reference:
 #   https://learn.microsoft.com/en-us/defender-endpoint/schedule-antivirus-scan-crontab
 #
-# Usage:
+# Usage (direct execution):
 #   chmod +x schedule_mdatp_scan.sh
 #   sudo ./schedule_mdatp_scan.sh
 #===============================================================================
@@ -33,7 +44,7 @@ readonly CRON_MARKER="# MDATP_WEEKLY_SCAN"
 readonly MDATP_CMD="/usr/bin/mdatp"
 
 # Scan type: "quick" or "full" (quick is recommended for weekly scheduled scans)
-readonly SCAN_TYPE="full"
+readonly SCAN_TYPE="quick"
 
 #-------------------------------------------------------------------------------
 # Functions
@@ -91,20 +102,21 @@ get_current_crontab() {
 remove_existing_mdatp_entry() {
     local crontab_content="$1"
     
-    # Use grep to exclude lines containing the marker
-    # grep -v returns exit code 1 if no lines match, so we use || true
-    echo "$crontab_content" | grep -v "$CRON_MARKER" || true
+    # Use grep -F (fixed string) to exclude lines containing the marker.
+    # -F prevents the marker from being interpreted as a regex pattern.
+    # grep -v returns exit code 1 if no lines remain after filtering, so we use || true.
+    echo "$crontab_content" | grep -Fv "$CRON_MARKER" || true
 }
 
 # Build the cron entry for the MDATP scan
-# Format: minute hour * * day_of_week command # marker
+# Format: minute hour day_of_month month day_of_week command # marker
 # Sunday = 0 in cron
 build_cron_entry() {
     local minute="$1"
     local hour="$2"
     
-    # Cron format: minute hour day_of_month month day_of_week command
-    # * * 0 means: any day of month, any month, on Sunday (0 = Sunday)
+    # Cron fields: minute hour day_of_month month day_of_week command
+    # '* *' = any day of month, any month; '0' = Sunday (day_of_week)
     echo "${minute} ${hour} * * 0 ${MDATP_CMD} scan ${SCAN_TYPE} ${CRON_MARKER}"
 }
 
@@ -114,6 +126,11 @@ install_crontab() {
     
     # Pipe directly to crontab - more secure than temp files
     echo "$new_crontab_content" | crontab -
+    
+    # Verify the entry was actually installed
+    if ! crontab -l 2>/dev/null | grep -Fq "$CRON_MARKER"; then
+        log_error "Crontab install succeeded but entry not found — crontab may have been overwritten"
+    fi
     
     log_info "Crontab updated successfully"
 }
@@ -168,7 +185,7 @@ ${new_cron_entry}"
     # Step 9: Display confirmation
     log_info "MDATP weekly scan scheduled successfully!"
     log_info "The scan will run every Sunday at $(printf '%02d:%02d' "$random_hour" "$random_minute")"
-    log_info ""
+    echo ""
     log_info "Current crontab entries:"
     crontab -l
 }
