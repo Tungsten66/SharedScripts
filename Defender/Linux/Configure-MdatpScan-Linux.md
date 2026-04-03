@@ -50,11 +50,9 @@ Uses Azure Policy `DeployIfNotExists` to deploy the cron job to target machines 
 
 **Important limitation:** Compliance state reflects whether the Run Command executed successfully — not whether the cron job currently exists. If the cron job is later removed manually, the machine remains Compliant (the Run Command resource already succeeded). Use Method 2 if continuous drift correction is required.
 
-Two policy definitions are provided — one for Arc-connected machines and one for Azure VMs:
-- [`mdatp-scan-policy-arc.json`](./mdatp-scan-policy-arc.json)
-- [`mdatp-scan-policy-vm.json`](./mdatp-scan-policy-vm.json)
+The ARM definitions template ([`mdatp-scan-policy-definitions.json`](./mdatp-scan-policy-definitions.json)) bundles the policy rules for both Arc-connected machines and Azure VMs.
 
-Both ARM templates can be deployed through the Azure portal using **Deploy a custom template** — no CLI required.
+All three ARM templates can be deployed through the Azure portal using **Deploy a custom template** — no CLI required.
 
 Two templates are provided:
 
@@ -511,9 +509,9 @@ A successful scan will output status messages and exit with code `0`.
 
 ### Method 1 — Azure Policy
 
-The cron schedule is embedded in the policy JSON (`mdatp-scan-policy-arc.json` / `mdatp-scan-policy-vm.json`). To update it:
+The cron schedule is embedded in [`mdatp-scan-policy-definitions.json`](./mdatp-scan-policy-definitions.json). To update it:
 
-1. Modify the `script` field in the relevant policy JSON file(s)
+1. Modify the `script` field for the Arc or VM policy rule (or both) inside the template
 2. Re-deploy the definitions template via **Deploy a custom template** (Step 1) — re-running is safe and idempotent.
 3. Delete the existing Run Command resource on each machine — the `existenceCondition` is satisfied once the Run Command succeeds and will not trigger redeployment unless the resource is absent:
    ```powershell
