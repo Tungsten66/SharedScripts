@@ -1,0 +1,213 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-08-01/managementGroupDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "managementGroupId": {
+      "type": "string",
+      "metadata": {
+        "description": "Management group ID where the policy definitions will be created. Definitions are always created at MG scope so they can be assigned at any lower scope."
+      }
+    }
+  },
+  "variables": {
+    "arcPolicyName": "deploy-mdatp-scan-arc-linux",
+    "vmPolicyName": "deploy-mdatp-scan-vm-linux",
+    "arcRoleDefinitionId": "/providers/Microsoft.Authorization/roleDefinitions/cd570a14-e51a-42ad-bac8-bafd67325302",
+    "vmRoleDefinitionId": "/providers/Microsoft.Authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c",
+    "script": "#!/bin/bash\nset -euo pipefail\nCRON_MARKER='# MDATP_WEEKLY_SCAN'\nMDATP_CMD='/usr/bin/mdatp'\nSCAN_TYPE='quick'\nif [[ $EUID -ne 0 ]]; then echo '[ERROR] Must run as root'; exit 1; fi\nif [[ ! -x \"$MDATP_CMD\" ]]; then echo '[ERROR] mdatp not found'; exit 1; fi\nHOUR=$(( RANDOM % 12 ))\nMINUTE=$(( RANDOM % 60 ))\nEXISTING=$(crontab -l 2>/dev/null || echo '')\nFILTERED=$(echo \"$EXISTING\" | grep -Fv \"$CRON_MARKER\" || true)\nENTRY=\"${MINUTE} ${HOUR} * * 0 ${MDATP_CMD} scan ${SCAN_TYPE} ${CRON_MARKER}\"\nif [[ -n \"$FILTERED\" ]]; then\n  printf '%s\\n%s\\n' \"$FILTERED\" \"$ENTRY\" | crontab -\nelse\n  echo \"$ENTRY\" | crontab -\nfi\nif ! crontab -l 2>/dev/null | grep -Fq \"$CRON_MARKER\"; then echo '[ERROR] Crontab entry not found after install'; exit 1; fi\necho \"[INFO] Scheduled: Sunday at $(printf '%02d:%02d' $HOUR $MINUTE)\""
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/policyDefinitions",
+      "apiVersion": "2023-04-01",
+      "name": "[variables('arcPolicyName')]",
+      "properties": {
+        "displayName": "Deploy: MDATP Weekly Scan Cron — Arc Linux",
+        "description": "Deploys the MDATP weekly quick scan cron entry to Arc-connected Linux machines via Run Command. Requires MDE.Linux extension to be provisioned on the target machine.",
+        "mode": "Indexed",
+        "policyType": "Custom",
+        "policyRule": {
+          "if": {
+            "allOf": [
+              {
+                "field": "type",
+                "equals": "Microsoft.HybridCompute/machines"
+              },
+              {
+                "field": "Microsoft.HybridCompute/machines/osName",
+                "contains": "linux"
+              },
+              {
+                "count": {
+                  "field": "Microsoft.HybridCompute/machines/extensions[*]",
+                  "where": {
+                    "allOf": [
+                      {
+                        "field": "Microsoft.HybridCompute/machines/extensions[*].type",
+                        "equals": "MDE.Linux"
+                      },
+                      {
+                        "field": "Microsoft.HybridCompute/machines/extensions[*].provisioningState",
+                        "equals": "Succeeded"
+                      }
+                    ]
+                  }
+                },
+                "greaterOrEquals": 1
+              }
+            ]
+          },
+          "then": {
+            "effect": "deployIfNotExists",
+            "details": {
+              "type": "Microsoft.HybridCompute/machines/runCommands",
+              "name": "ScheduleMdatpQuickScan",
+              "evaluationDelay": "AfterProvisioningSuccess",
+              "existenceCondition": {
+                "field": "Microsoft.HybridCompute/machines/runCommands/properties/instanceView/executionState",
+                "equals": "Succeeded"
+              },
+              "roleDefinitionIds": [
+                "[variables('arcRoleDefinitionId')]"
+              ],
+              "deployment": {
+                "properties": {
+                  "mode": "incremental",
+                  "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                      "machineName": { "type": "string" },
+                      "location": { "type": "string" }
+                    },
+                    "resources": [
+                      {
+                        "type": "Microsoft.HybridCompute/machines/runCommands",
+                        "apiVersion": "2024-07-10",
+                        "name": "[concat(parameters('machineName'), '/ScheduleMdatpQuickScan')]",
+                        "location": "[parameters('location')]",
+                        "properties": {
+                          "source": {
+                            "script": "[variables('script')]"
+                          },
+                          "runAsUser": "root",
+                          "timeoutInSeconds": 120
+                        }
+                      }
+                    ],
+                    "outputs": {}
+                  },
+                  "parameters": {
+                    "machineName": { "value": "[field('name')]" },
+                    "location": { "value": "[field('location')]" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/policyDefinitions",
+      "apiVersion": "2023-04-01",
+      "name": "[variables('vmPolicyName')]",
+      "properties": {
+        "displayName": "Deploy: MDATP Weekly Scan Cron — Azure VM Linux",
+        "description": "Deploys the MDATP weekly quick scan cron entry to Azure Linux VMs via Run Command. Requires MDE.Linux extension to be provisioned on the target VM.",
+        "mode": "Indexed",
+        "policyType": "Custom",
+        "policyRule": {
+          "if": {
+            "allOf": [
+              {
+                "field": "type",
+                "equals": "Microsoft.Compute/virtualMachines"
+              },
+              {
+                "field": "Microsoft.Compute/virtualMachines/storageProfile.osDisk.osType",
+                "equals": "Linux"
+              },
+              {
+                "count": {
+                  "field": "Microsoft.Compute/virtualMachines/extensions[*]",
+                  "where": {
+                    "allOf": [
+                      {
+                        "field": "Microsoft.Compute/virtualMachines/extensions[*].type",
+                        "equals": "MDE.Linux"
+                      },
+                      {
+                        "field": "Microsoft.Compute/virtualMachines/extensions[*].provisioningState",
+                        "equals": "Succeeded"
+                      }
+                    ]
+                  }
+                },
+                "greaterOrEquals": 1
+              }
+            ]
+          },
+          "then": {
+            "effect": "deployIfNotExists",
+            "details": {
+              "type": "Microsoft.Compute/virtualMachines/runCommands",
+              "name": "ScheduleMdatpQuickScan",
+              "evaluationDelay": "AfterProvisioningSuccess",
+              "existenceCondition": {
+                "field": "Microsoft.Compute/virtualMachines/runCommands/provisioningState",
+                "equals": "Succeeded"
+              },
+              "roleDefinitionIds": [
+                "[variables('vmRoleDefinitionId')]"
+              ],
+              "deployment": {
+                "properties": {
+                  "mode": "incremental",
+                  "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                      "vmName": { "type": "string" },
+                      "location": { "type": "string" }
+                    },
+                    "resources": [
+                      {
+                        "type": "Microsoft.Compute/virtualMachines/runCommands",
+                        "apiVersion": "2024-07-01",
+                        "name": "[concat(parameters('vmName'), '/ScheduleMdatpQuickScan')]",
+                        "location": "[parameters('location')]",
+                        "properties": {
+                          "source": {
+                            "script": "[variables('script')]"
+                          },
+                          "runAsUser": "root",
+                          "timeoutInSeconds": 120
+                        }
+                      }
+                    ],
+                    "outputs": {}
+                  },
+                  "parameters": {
+                    "vmName": { "value": "[field('name')]" },
+                    "location": { "value": "[field('location')]" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "arcPolicyDefinitionId": {
+      "type": "string",
+      "value": "[extensionResourceId(tenantResourceId('Microsoft.Management/managementGroups', parameters('managementGroupId')), 'Microsoft.Authorization/policyDefinitions', variables('arcPolicyName'))]"
+    },
+    "vmPolicyDefinitionId": {
+      "type": "string",
+      "value": "[extensionResourceId(tenantResourceId('Microsoft.Management/managementGroups', parameters('managementGroupId')), 'Microsoft.Authorization/policyDefinitions', variables('vmPolicyName'))]"
+    }
+  }
+}

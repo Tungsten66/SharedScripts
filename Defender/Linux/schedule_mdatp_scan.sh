@@ -8,13 +8,12 @@
 # Scope:
 #   This is the STANDALONE version of the scan scheduler. It is intended for:
 #     - Direct execution on a Linux host (see Usage below)
-#     - Arc Run Command deployment (Method 1 in Deploy-MdatpScan-ArcLinux.md),
-#       where Azure CLI references this file via --script "@schedule_mdatp_scan.sh"
+#     - Manual remediation on individual machines
 #
-#   The Azure Policy deployment (Method 2) uses a separate condensed inline script
-#   embedded directly in mdatp-scan-policy-arc.json. That inline script implements the
-#   same logic but is not sourced from this file. Refer to Deploy-MdatpScan-ArcLinux.md
-#   for full deployment guidance covering both methods.
+#   The primary deployment method for Azure VMs and Arc-connected Linux machines
+#   is Azure Machine Configuration (audit+set), documented in Configure-MdatpScan-Linux.md.
+#   The SetScript in that package uses the same cron entry logic as this script.
+#   This file is not directly referenced by the Machine Configuration package.
 #
 # Features:
 #   - Generates random hour (0-11) and minute (0-59) for scan time
