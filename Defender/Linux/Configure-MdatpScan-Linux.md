@@ -13,23 +13,13 @@ Two methods are covered:
 
 ## Prerequisites
 
-### Azure Government CLI Cloud Setup
-
-All CLI commands in this guide are written for **PowerShell**. Run from a local PowerShell session, the VS Code integrated terminal, or Azure Cloud Shell (PowerShell session).
-
-If targeting Azure Government, set the active cloud before running any `az` commands:
-
-```powershell
-az cloud set --name AzureUSGovernment
-az login
-az account set --subscription "<your-subscription-id>"
-```
-
 ### Method 1 — Azure Policy
 
-- Azure CLI
+All scripts in this guide are written for **PowerShell**. Run from Azure Cloud Shell (PowerShell session) or a local PowerShell session with the Az module installed.
+
+- **PowerShell Az module:** `Install-Module Az -Scope CurrentUser` (pre-installed in Cloud Shell)
 - **RBAC roles (for you):** `Resource Policy Contributor` and `Management Group Contributor`
-- **RBAC roles (policy managed identity):** assigned automatically via `--role` in the assignment command:
+- **RBAC roles (policy managed identity):** granted automatically by the script:
   - `Azure Connected Machine Resource Administrator` — Arc machines
   - `Virtual Machine Contributor` — Azure VMs
 
@@ -50,74 +40,60 @@ Uses Azure Policy `DeployIfNotExists` to deploy the cron job to target machines 
 
 **Important limitation:** Compliance state reflects whether the Run Command executed successfully — not whether the cron job currently exists. If the cron job is later removed manually, the machine remains Compliant (the Run Command resource already succeeded). Use Method 2 if continuous drift correction is required.
 
-The ARM definitions template ([`mdatp-scan-policy-definitions.json`](./mdatp-scan-policy-definitions.json)) bundles the policy rules for both Arc-connected machines and Azure VMs.
+Three files are used:
 
-All three ARM templates can be deployed through the Azure portal using **Deploy a custom template** — no CLI required.
-
-Two templates are provided:
-
-| Template | Deployment scope | Purpose |
-|----------|-----------------|--------|
-| [`mdatp-scan-policy-definitions.json`](./mdatp-scan-policy-definitions.json) | Management group | Creates both policy definitions. Run once. |
-| [`mdatp-scan-policy-assignments-mg.json`](./mdatp-scan-policy-assignments-mg.json) | Management group | Assigns both policies at management group scope. Covers all subscriptions under the MG. |
-| [`mdatp-scan-policy-assignments.json`](./mdatp-scan-policy-assignments.json) | Subscription | Assigns both policies at subscription (or resource group) scope. Redeploy per scope. |
+| File | Purpose |
+|------|---------|
+| [`Deploy-MdatpScanPolicy.ps1`](./Deploy-MdatpScanPolicy.ps1) | Creates definitions, assignments, and role assignments in one run |
+| [`mdatp-scan-arc-policy-rule.json`](./mdatp-scan-arc-policy-rule.json) | Policy rule for Arc-connected Linux machines |
+| [`mdatp-scan-vm-policy-rule.json`](./mdatp-scan-vm-policy-rule.json) | Policy rule for Azure VM Linux machines |
 
 ---
 
-### Step 1 — Deploy Policy Definitions (management group scope)
+### Step 1 — Clone or download the files
 
-Run once. Re-running is safe — ARM will update the definitions if the template changes.
-
-1. In the Azure portal, search for **Deploy a custom template** and select it.
-2. Click **Build your own template in the editor**, paste the full contents of [`mdatp-scan-policy-definitions.json`](./mdatp-scan-policy-definitions.json), then click **Save**.
-3. Under **Scope**, set the deployment scope to **Management group** and select your management group.
-4. Set **Region** to your preferred Azure region.
-5. Under **Parameters**, set `managementGroupId` to your management group ID.
-6. Click **Review + create**, then **Create**.
+Ensure all three files are in the same directory on your machine or Cloud Shell session.
 
 ---
 
-### Step 2 — Deploy Policy Assignments
+### Step 2 — Run the deployment script
 
-Two templates are available depending on the desired assignment scope.
+Open Azure Cloud Shell (PowerShell) or a local PowerShell session, then run:
 
-#### Option A — Management group scope (recommended)
+**Assign at management group scope** (covers all subscriptions under the MG — recommended):
 
-Use [`mdatp-scan-policy-assignments-mg.json`](./mdatp-scan-policy-assignments-mg.json). A single deployment covers all subscriptions and machines under the management group — no need to redeploy per subscription.
+```powershell
+.\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus'
+```
 
-1. In the Azure portal, search for **Deploy a custom template** and select it.
-2. Click **Build your own template in the editor**, paste the full contents of [`mdatp-scan-policy-assignments-mg.json`](./mdatp-scan-policy-assignments-mg.json), then click **Save**.
-3. Under **Scope**, set the deployment scope to **Management group** and select your management group.
-4. Set **Region** to the same location used in Step 1.
-5. Under **Parameters**, fill in the following:
+**Assign at a single subscription:**
 
-   | Parameter | Value |
-   |-----------|-------|
-   | `definitionManagementGroupId` | Management group ID where definitions were deployed (Step 1) |
-   | `assignmentManagementGroupId` *(optional)* | Management group to assign the policies to. Defaults to the deployment management group — leave blank if they are the same. |
-   | `location` | Same region as Step 1 |
+```powershell
+.\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+    -AssignmentScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
+```
 
-6. Click **Review + create**, then **Create**.
+**Assign at a resource group:**
 
-#### Option B — Subscription or resource group scope
+```powershell
+.\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+    -AssignmentScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy/resourceGroups/<resource-group-name>'
+```
 
-Use [`mdatp-scan-policy-assignments.json`](./mdatp-scan-policy-assignments.json). Repeat for each subscription you want to target.
+**Azure Government:**
 
-1. In the Azure portal, search for **Deploy a custom template** and select it.
-2. Click **Build your own template in the editor**, paste the full contents of [`mdatp-scan-policy-assignments.json`](./mdatp-scan-policy-assignments.json), then click **Save**.
-3. Under **Scope**, select **Subscription** and choose the target subscription.
-4. Set **Region** to the same location used in Step 1.
-5. Under **Parameters**, fill in the following:
+```powershell
+.\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'usgovvirginia' `
+    -Environment 'AzureUSGovernment'
+```
 
-   | Parameter | Value |
-   |-----------|-------|
-   | `definitionManagementGroupId` | Management group ID where definitions were deployed (Step 1) |
-   | `location` | Same region as Step 1 |
-   | `assignmentScope` *(optional)* | To narrow to a resource group: `/subscriptions/<subscription-id>/resourceGroups/<rg-name>`. Leave blank to target the full subscription. |
+The script runs in three phases and prints progress for each:
 
-6. Click **Review + create**, then **Create**.
+1. Creates both policy definitions at the management group
+2. Creates both policy assignments at the specified scope with system-assigned managed identities
+3. Grants the required role assignments to each managed identity
 
-Both templates create the managed identity role assignments automatically at the same scope as the assignment.
+Re-running the script is safe — definitions are updated in-place if they already exist, existing assignments are detected and skipped, and duplicate role assignments are silently ignored.
 
 ---
 
@@ -481,7 +457,7 @@ The hour and minute will vary since the SetScript generates a random time.
 sudo crontab -l | grep "MDATP_WEEKLY_SCAN"
 ```
 
-Should return exactly one line. If it returns more than one, the idempotency marker was not matched correctly — re-applying the configuration will reset to a clean state.
+Should return exactly one line. If it returns more than one, the deduplication marker was not matched correctly — re-applying the configuration will reset to a clean state.
 
 ### Verify MDE Is Running
 
@@ -509,30 +485,62 @@ A successful scan will output status messages and exit with code `0`.
 
 ### Method 1 — Azure Policy
 
-The cron schedule is embedded in [`mdatp-scan-policy-definitions.json`](./mdatp-scan-policy-definitions.json). To update it:
+The cron schedule is controlled by the `script` field inside `mdatp-scan-arc-policy-rule.json` and `mdatp-scan-vm-policy-rule.json`. The relevant lines are:
 
-1. Modify the `script` field for the Arc or VM policy rule (or both) inside the template
-2. Re-deploy the definitions template via **Deploy a custom template** (Step 1) — re-running is safe and idempotent.
-3. Delete the existing Run Command resource on each machine — the `existenceCondition` is satisfied once the Run Command succeeds and will not trigger redeployment unless the resource is absent:
+```bash
+HOUR=$(( RANDOM % 12 ))       # Random hour between 0–11 (midnight to 11 AM)
+MINUTE=$(( RANDOM % 60 ))     # Random minute between 0–59
+ENTRY="${MINUTE} ${HOUR} * * 0 ${MDATP_CMD} scan quick ${CRON_MARKER}"
+#                         ^ day of week: 0 = Sunday
+```
+
+The cron entry format is: `<minute> <hour> <day-of-month> <month> <day-of-week>`
+
+**To change the day** — replace the `0` in `* * 0`:
+
+| Value | Day |
+|-------|-----|
+| `0` or `7` | Sunday |
+| `1` | Monday |
+| `2` | Tuesday |
+| `3` | Wednesday |
+| `4` | Thursday |
+| `5` | Friday |
+| `6` | Saturday |
+
+**To set a fixed time instead of random** — replace the `RANDOM` lines with hardcoded values:
+```bash
+HOUR=2      # 2 AM
+MINUTE=30   # :30
+```
+
+After editing the JSON files, follow the update steps below to redeploy.
+
+To update it:
+
+> **Important:** All three steps below are required. Updating the policy definition alone (step 2) has no effect on machines that are already compliant — the policy will not re-run the script unless the Run Command resource is deleted first (step 3).
+
+1. Modify the `script` field in [`mdatp-scan-arc-policy-rule.json`](./mdatp-scan-arc-policy-rule.json), [`mdatp-scan-vm-policy-rule.json`](./mdatp-scan-vm-policy-rule.json), or both.
+2. Re-run `Deploy-MdatpScanPolicy.ps1` to push the updated script content to the policy definition.
+3. **Delete the existing Run Command resource on each machine.** The policy's `existenceCondition` checks whether a Run Command named `ScheduleMdatpQuickScan` exists with `provisioningState = Succeeded`. Once that condition is met, the policy considers the machine compliant and will **not** re-run the script — even if the script content has changed. Deleting the Run Command resource causes the machine to appear non-compliant and triggers a fresh deployment with the updated script.
    ```powershell
    # Arc machines
-   az connectedmachine run-command delete `
-     --resource-group "<resource-group>" `
-     --machine-name "<machine-name>" `
-     --run-command-name "ScheduleMdatpQuickScan" `
-     --yes
+   Remove-AzConnectedMachineRunCommand `
+     -ResourceGroupName "<resource-group>" `
+     -MachineName "<machine-name>" `
+     -RunCommandName "ScheduleMdatpQuickScan"
 
    # Azure VMs
-   az vm run-command delete `
-     --resource-group "<resource-group>" `
-     --vm-name "<vm-name>" `
-     --run-command-name "ScheduleMdatpQuickScan"
+   Remove-AzVMRunCommand `
+     -ResourceGroupName "<resource-group>" `
+     -VMName "<vm-name>" `
+     -RunCommandName "ScheduleMdatpQuickScan"
    ```
-4. Trigger remediation or wait for the next evaluation cycle
+4. Trigger remediation or wait for the next evaluation cycle (~24 hours). The policy will detect the missing Run Command, execute the updated script, and recreate the resource.
 
 ### Method 2 — Machine Configuration
 
-Because the SetScript uses the `# MDATP_WEEKLY_SCAN` idempotency marker, re-applying the configuration overwrites the existing cron entry cleanly.
+Because the SetScript uses the `# MDATP_WEEKLY_SCAN` deduplication marker, re-applying the configuration overwrites the existing cron entry cleanly.
 
 To push an updated schedule:
 1. Modify the `SetScript` in `MdatpWeeklyScan.ps1` if needed
@@ -541,9 +549,79 @@ To push an updated schedule:
 
 ---
 
+## Cleanup
+
+### Method 1 — Azure Policy
+
+Remove in this order: assignments first (they reference the definitions), then the definitions. Role assignments are removed automatically when the policy assignment is deleted.
+
+```powershell
+$ManagementGroupId = '<management-group-id>'
+$AssignmentScope   = "/providers/Microsoft.Management/managementGroups/$ManagementGroupId"
+
+# 1 — Remove policy assignments (also removes the managed identity role assignments)
+Remove-AzPolicyAssignment -Name 'deploy-mdatp-cron-arc' -Scope $AssignmentScope
+Remove-AzPolicyAssignment -Name 'deploy-mdatp-cron-vm'  -Scope $AssignmentScope
+
+# 2 — Remove policy definitions
+Remove-AzPolicyDefinition -Name 'deploy-mdatp-scan-arc-linux' -ManagementGroupName $ManagementGroupId -Force
+Remove-AzPolicyDefinition -Name 'deploy-mdatp-scan-vm-linux'  -ManagementGroupName $ManagementGroupId -Force
+```
+
+> **Note:** Removing the assignments and definitions does **not** remove the cron job from machines that were already remediated. The Run Command resource will also remain on each machine. To remove the cron job from machines, delete it manually or via a separate script:
+> ```bash
+> sudo crontab -l | grep -Fv '# MDATP_WEEKLY_SCAN' | crontab -
+> ```
+
+To also remove the Run Command resources left on machines:
+
+```powershell
+# Arc machines
+Remove-AzConnectedMachineRunCommand `
+  -ResourceGroupName "<resource-group>" `
+  -MachineName "<machine-name>" `
+  -RunCommandName "ScheduleMdatpQuickScan"
+
+# Azure VMs
+Remove-AzVMRunCommand `
+  -ResourceGroupName "<resource-group>" `
+  -VMName "<vm-name>" `
+  -RunCommandName "ScheduleMdatpQuickScan"
+```
+
+---
+
+### Method 2 — Machine Configuration
+
+```powershell
+$ManagementGroupId = '<management-group-id>'
+
+# 1 — Remove policy assignment
+az policy assignment delete `
+  --name "config-mdatp-cron-linux" `
+  --scope "/providers/Microsoft.Management/managementGroups/$ManagementGroupId"
+
+# 2 — Remove policy definition
+az policy definition delete `
+  --name "configure-mdatp-scan-linux" `
+  --management-group $ManagementGroupId
+```
+
+> **Note:** Removing the assignment stops future enforcement but does **not** remove the cron job from already-compliant machines. Remove it manually if needed:
+> ```bash
+> sudo crontab -l | grep -Fv '# MDATP_WEEKLY_SCAN' | crontab -
+> ```
+
+---
+
 ## References
 
 - [Azure Machine Configuration overview](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/overview)
+- [Azure Machine Configuration — authoring packages](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-create)
+- [Azure Machine Configuration — policy effects (ApplyAndAutoCorrect)](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-policy-effects)
+- [Azure Machine Configuration — Arc-connected servers](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-arc)
+- [Schedule antivirus scans with crontab – Microsoft Learn](https://learn.microsoft.com/en-us/defender-endpoint/schedule-antivirus-scan-crontab)
+- [Azure Government — available services](https://learn.microsoft.com/en-us/azure/azure-government/documentation-government-services)
 - [Azure Machine Configuration — authoring packages](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-create)
 - [Azure Machine Configuration — policy effects (ApplyAndAutoCorrect)](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-policy-effects)
 - [Azure Machine Configuration — Arc-connected servers](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-arc)
