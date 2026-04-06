@@ -1,13 +1,13 @@
-# Configure MDATP Weekly Scan — Azure and Arc Linux
+# Configure MDATP Weekly Scan — Azure Arc-Connected Linux
 
-Deploys a weekly Microsoft Defender for Endpoint (MDATP) quick scan schedule to **Azure Linux virtual machines** and **Azure Arc-connected Linux servers**.
+Deploys a weekly Microsoft Defender for Endpoint (MDATP) quick scan schedule to **Azure Arc-connected Linux servers**.
 
 Two methods are covered:
 
-- **Method 1 — Azure Policy (DeployIfNotExists)**: Deploys the cron job to target machines via `DeployIfNotExists` policy. New or updated machines are handled by the assignment. Existing machines require a remediation task. It does not re-apply if the cron job is later removed because compliance reflects Run Command execution state, not cron job presence.
-- **Method 2 — Machine Configuration (Continuous)**: Uses Azure Policy with `ApplyAndAutoCorrect` to continuously enforce the cron job. Under the tenant controls described in this guide, this method is currently practical for **Azure Linux VMs**. For **Arc-connected Linux servers**, private custom package access requires a SAS URL or a supported identity pattern that is not available here, so Arc coverage should be treated as unsupported until validated in your environment.
+- **Method 1 — Azure Policy (DeployIfNotExists)**: Deploys the cron job to Arc-connected Linux machines via `DeployIfNotExists` policy. New or updated machines are handled by the assignment. Existing machines require a remediation task. It does not re-apply if the cron job is later removed because compliance reflects Run Command execution state, not cron job presence.
+- **Method 2 — Machine Configuration (Continuous)**: Uses Azure Policy with `ApplyAndAutoCorrect` to continuously enforce the cron job on **Azure Arc-connected Linux servers**. For Arc custom packages, the supported secure package access model is a **SAS URL**. You can still keep the storage account private by routing Arc-connected machines to the blob endpoint over private connectivity and private DNS if your network design supports it.
 
-**Recommended approach:** Use Method 1 for mixed Azure VM and Arc coverage today. Use Method 2 for Azure VM-only continuous enforcement when you need drift correction.
+**Recommended approach:** Use Method 1 if you want the simplest Arc deployment with no custom package hosting. Use Method 2 when you need continuous drift correction and can operate secure SAS-based package delivery.
 
 ---
 
@@ -21,15 +21,16 @@ All scripts in this guide are written for **PowerShell**. Run from Azure Cloud S
 - **RBAC roles (for you):** `Resource Policy Contributor` and `Management Group Contributor`
 - **RBAC roles (policy managed identity):** granted automatically by the script:
   - `Azure Connected Machine Resource Administrator` — Arc machines
-  - `Virtual Machine Contributor` — Azure VMs
 
 ### Method 2 — Machine Configuration
 
 - **PowerShell 7.2+** and modules:
+
   ```powershell
   Install-Module GuestConfiguration -Force
   Install-Module nx -Force
   ```
+
 - Azure Storage Account, PowerShell Az module, and RBAC roles — see [Method 2 Prerequisites](#prerequisites-method-2)
 
 ---
@@ -40,19 +41,20 @@ Uses Azure Policy `DeployIfNotExists` to deploy the cron job to target machines 
 
 **Important limitation:** Compliance state reflects whether the Run Command executed successfully — not whether the cron job currently exists. If the cron job is later removed manually, the machine remains Compliant (the Run Command resource already succeeded). Use Method 2 if continuous drift correction is required.
 
-Three files are used:
+**Important targeting note:** Method 1 now targets **all Arc-connected Linux machines** in scope. The Run Command script checks whether `/usr/bin/mdatp` exists before writing the cron entry. Machines without MDE installed will be targeted, the script will fail, and those machines will remain **Non-compliant** until they are excluded from scope or MDE is installed.
+
+Two files are used:
 
 | File | Purpose |
-|------|---------|
-| [`Deploy-MdatpScanPolicy.ps1`](./Deploy-MdatpScanPolicy.ps1) | Creates definitions, assignments, and role assignments in one run |
+| --- | --- |
+| [`Deploy-MdatpScan-ArcPolicy.ps1`](./Deploy-MdatpScan-ArcPolicy.ps1) | Creates definitions, assignments, and role assignments in one run |
 | [`mdatp-scan-arc-policy-rule.json`](./mdatp-scan-arc-policy-rule.json) | Policy rule for Arc-connected Linux machines |
-| [`mdatp-scan-vm-policy-rule.json`](./mdatp-scan-vm-policy-rule.json) | Policy rule for Azure VM Linux machines |
 
 ---
 
 ### Step 1 — Clone or download the files
 
-Ensure all three files are in the same directory on your machine or Cloud Shell session.
+Ensure both files are in the same directory on your machine or Cloud Shell session.
 
 ---
 
@@ -60,42 +62,77 @@ Ensure all three files are in the same directory on your machine or Cloud Shell 
 
 Open Azure Cloud Shell (PowerShell) or a local PowerShell session, then run:
 
+The first set of examples below creates the policy definition and assignment. The remediation examples that follow add `-CreateRemediationTasks` for existing machines.
+
 **Assign at management group scope** (covers all subscriptions under the MG — recommended):
 
 ```powershell
-.\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus'
+.\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus'
 ```
 
 **Assign at a single subscription:**
 
 ```powershell
-.\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+.\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
     -AssignmentScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
 ```
 
 **Assign at a resource group:**
 
 ```powershell
-.\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+.\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
     -AssignmentScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy/resourceGroups/<resource-group-name>'
 ```
 
 **Azure Government:**
 
 ```powershell
-.\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'usgovvirginia' `
+.\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'usgovvirginia' `
     -Environment 'AzureUSGovernment'
 ```
 
 The script runs in three phases by default and prints progress for each:
 
-1. Creates both policy definitions at the management group
-2. Creates both policy assignments at the specified scope with system-assigned managed identities
-3. Grants the required role assignments to each managed identity
+1. Creates the Arc policy definition at the management group
+2. Creates the Arc policy assignment at the specified scope with a system-assigned managed identity
+3. Grants the required role assignment to that managed identity
 
-If you use `-CreateRemediationTasks`, the script adds a fourth phase that starts remediation for existing machines with `ReEvaluateCompliance`.
+If you use `-CreateRemediationTasks`, the script adds a fourth phase that starts remediation for existing machines.
+
+When the assignment scope is a **management group**, the script automatically creates one remediation task per child **subscription** under that management group so it can use `ReEvaluateCompliance`. When the assignment scope is a **subscription** or **resource group**, the script creates the remediation task at that same scope. You can override this behavior with `-RemediationScope`.
 
 Re-running the script is safe for definitions, assignments, and role assignments. If you use `-CreateRemediationTasks`, existing remediation task names are detected and skipped.
+
+**Assign at management group scope and remediate existing resources across child subscriptions:**
+
+```powershell
+.\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+  -CreateRemediationTasks
+```
+
+**Assign at a single subscription and remediate existing resources in that subscription:**
+
+```powershell
+.\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+  -AssignmentScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy' `
+  -CreateRemediationTasks
+```
+
+**Assign at a resource group and remediate existing resources in that resource group:**
+
+```powershell
+.\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+  -AssignmentScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy/resourceGroups/<resource-group-name>' `
+  -CreateRemediationTasks
+```
+
+**Assign at management group scope and remediate only a specific subscription:**
+
+```powershell
+.\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+  -CreateRemediationTasks `
+  -RemediationScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
+```
 
 ---
 
@@ -103,7 +140,7 @@ Re-running the script is safe for definitions, assignments, and role assignments
 
 After assignment, Azure Policy compliance can take some time to refresh. To view compliance state:
 
-**Azure Policy** → **Compliance** → filter by assignment name `deploy-mdatp-cron-arc` or `deploy-mdatp-cron-vm`.
+**Azure Policy** → **Compliance** → filter by assignment name `deploy-mdatp-cron-arc`.
 
 ### Trigger Immediate Remediation
 
@@ -111,7 +148,7 @@ To deploy to existing non-compliant machines without waiting for a later policy 
 
 **Azure Policy** → **Remediation** → **New remediation task** → select the assignment → **Remediate**.
 
-For PowerShell, use `ReEvaluateCompliance` so existing resources are rediscovered before remediation starts:
+For PowerShell, use `ReEvaluateCompliance` so existing resources are rediscovered before remediation starts when the remediation scope is **subscription scope or below**:
 
 ```powershell
 Start-AzPolicyRemediation `
@@ -121,73 +158,62 @@ Start-AzPolicyRemediation `
   -ResourceDiscoveryMode ReEvaluateCompliance
 ```
 
+For a policy assigned at **management group scope**, create remediation tasks at **subscription scope** or **resource group scope** rather than at management group scope. This allows `ReEvaluateCompliance` to rediscover matching resources after you update the policy.
+
 ---
 
-## Method 2 — Machine Configuration (Continuous, Azure VMs)
+## Method 2 — Machine Configuration (Continuous, Azure Arc)
 
-Uses Azure Policy `ApplyAndAutoCorrect` to continuously enforce the cron job on Azure Linux VMs. The guest assignment is checked every 5 minutes, and settings are rechecked about every 15 minutes after assignment. If the cron job is removed, it is reinstalled on the next machine configuration evaluation.
+Uses Azure Policy `ApplyAndAutoCorrect` to continuously enforce the cron job on Azure Arc-connected Linux servers. The guest assignment is checked every 5 minutes, and settings are rechecked about every 15 minutes after assignment. If the cron job is removed, it is reinstalled on the next machine configuration evaluation.
 
-**Important scope note:** Under the storage restrictions described in this guide, Method 2 should be treated as **Azure VM-only**. Arc-connected Linux servers require a package access model that is not covered here.
+**Important scope note:** For Arc custom Machine Configuration packages, Microsoft documents secure package access by using a **SAS URL**. User-assigned managed identity is documented for Azure VMs, not Arc-connected machines. Keep that distinction explicit when designing package delivery. See [How to provide secure access to custom machine configuration packages](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/how-to/develop-custom-package/5-access-package), which states that unlike Azure VMs, Arc-connected machines currently do not support user-assigned managed identities for this scenario.
 
 ### How It Works
 
 1. A custom Machine Configuration package is built from an InSpec audit profile and a DSC `nxScript` set script
 2. The package is published to an Azure Storage Account
-3. An Azure Policy (`ApplyAndAutoCorrect`) definition is created from the package and assigned at management group scope
-4. The Machine Configuration agent on each Azure VM processes the guest assignment:
+3. A read-only **user delegation SAS** is generated for the package blob
+4. An Azure Policy (`ApplyAndAutoCorrect`) definition is created from the package and assigned at management group scope
+5. The Machine Configuration agent on each Arc-connected Linux server processes the guest assignment:
    - **Audit**: InSpec checks whether the `# MDATP_WEEKLY_SCAN` cron entry exists in the root crontab
    - **Set**: If the cron entry is missing, the `nxScript` SetScript installs it automatically
-5. Machines with the cron job present are **Compliant**; machines with it absent are **Non-compliant** and remediated on the next evaluation cycle — no manual remediation task required
+6. Machines with the cron job present are **Compliant**; machines with it absent are **Non-compliant** and remediated on the next evaluation cycle — no manual remediation task required
 
 ### Prerequisites (Method 2)
 
 - **PowerShell 7.2+** on your local machine
 - **PowerShell modules:**
+
   ```powershell
   Install-Module GuestConfiguration -Force
   Install-Module nx -Force          # Linux DSC resources (provides nxScript)
   ```
+
 - **Azure Storage Account** to host the configuration package
   - Public blob access must remain disabled
-  - If your tenant blocks SAS for storage access, treat this method as Azure VM-only unless you validate an alternative supported package access pattern
   - All storage operations must use **Azure AD authentication** (`--auth-mode login`)
-  - Package access for guest assignments must follow Microsoft-supported custom package access guidance. Azure VMs can use a supported identity-based path. Arc package access should be validated separately before rollout.
-  - **Azure VMs:** System-assigned managed identity must be enabled on each VM
+  - Package access for Arc guest assignments must follow Microsoft-supported custom package access guidance. For Arc custom packages, use a **SAS URL** for the package blob.
+  - Keep SAS as narrow as possible: read-only, package-blob scope only, short expiry, and rotate it when you publish a new package version.
+  - If you use private endpoints for the storage account, Arc-connected machines must have network path and private DNS resolution to the blob endpoint.
+  - **Azure Government:** use sovereign blob endpoints such as `*.blob.core.usgovcloudapi.net` and the matching private DNS zone for Blob private endpoints.
 - **MDE deployed** on each Linux machine (`/usr/bin/mdatp` present) before the package runs
-- **Machine Configuration extension** deployed on each target Azure VM (see Step 1)
+- **Azure Arc Connected Machine agent** installed and connected on each target Linux server
+- **Machine Configuration enabled** on each Arc-connected server. The guest configuration capability is provided by the Connected Machine agent; no separate Azure VM extension is required.
 - **RBAC roles:**
   - `Resource Policy Contributor` — to create and assign the policy
   - `Management Group Contributor` — to create the definition at management group scope
   - `Storage Blob Data Contributor` — to upload the package to the storage account
-  - `Contributor` on target machines/scope — required for the managed identity to apply configuration (audit+set requires write access, unlike audit-only)
+  - `Contributor` on target machines/scope — required for the policy assignment managed identity to apply configuration (audit+set requires write access, unlike audit-only)
 
-### Step 1 — Deploy the Machine Configuration Agent on Azure VMs
+### Step 1 — Prepare Azure Arc-connected Servers
 
-Each Azure VM requires the Machine Configuration extension. Check for `AzurePolicyforLinux` in the portal:
+Arc-connected servers include guest configuration capability through the Azure Connected Machine agent. There is no separate Azure VM extension to deploy for this method.
 
-- **Azure VMs:** Virtual Machines → *select VM* → **Extensions + applications**
+- Ensure each target Linux server is onboarded to Azure Arc
+- Ensure the agent remains in full mode and guest configuration has not been disabled
+- If you use Azure Arc Private Link Scope, remember that package storage private access is configured separately from Arc service connectivity
 
-### Azure VMs
-
-```powershell
-$ResourceGroup = "<resource-group>"
-$vms = az vm list `
-  --resource-group $ResourceGroup `
-  --query "[?storageProfile.osDisk.osType=='Linux'].{name:name, location:location}" `
-  --output json | ConvertFrom-Json
-
-foreach ($vm in $vms) {
-  az vm extension set `
-    --resource-group $ResourceGroup `
-    --vm-name $vm.name `
-    --name "ConfigurationForLinux" `
-    --extension-instance-name "AzurePolicyforLinux" `
-    --publisher "Microsoft.GuestConfiguration" `
-    --enable-auto-upgrade true
-}
-```
-
-**Arc note:** Arc-enabled servers include guest configuration services through the Connected Machine agent, but custom package rollout for this method should not be assumed to work under the tenant storage restrictions in this guide without separate validation.
+**Azure Government:** Arc guest configuration endpoints use sovereign domains such as `*.guestconfiguration.azure.us`. If you also use Arc private link, some endpoints such as Microsoft Entra ID and Azure Resource Manager still require access through the appropriate sovereign public endpoints.
 
 ---
 
@@ -195,7 +221,7 @@ foreach ($vm in $vms) {
 
 Create the following directory and files locally:
 
-```
+```text
 MdatpWeeklyScan/
   MdatpWeeklyScan.ps1     (DSC configuration — audit+set logic)
   inspec/
@@ -247,6 +273,7 @@ MdatpWeeklyScan -OutputPath './MdatpWeeklyScan'
 ### InSpec Audit Profile
 
 **`inspec/inspec.yml`**
+
 ```yaml
 name: MdatpWeeklyScan
 title: MDATP Weekly Scan Cron Job
@@ -258,6 +285,7 @@ supports:
 ```
 
 **`inspec/controls/mdatp_cron.rb`**
+
 ```ruby
 title 'MDATP Weekly Scan - Root Crontab'
 
@@ -269,8 +297,6 @@ end
 ---
 
 ### Step 3 — Build and Publish the Package
-
-> **Tenant policy compliance:** Tenant policies block shared key access and anonymous blob access on all storage accounts. All `az storage` commands below use `--auth-mode login` (Azure AD) for upload and management operations. Package download for guest assignments must still follow a Microsoft-supported custom package access pattern. If your tenant disallows SAS and you need Arc support, validate that design separately before rollout.
 
 ```powershell
 # Compile the DSC configuration (if not already done in Step 2)
@@ -299,60 +325,63 @@ az storage blob upload `
   --auth-mode login `
   --overwrite
 
-# Get the blob URI for the package
-$PackageUri = az storage blob url `
+# Set an expiry for a read-only user delegation SAS
+$SasExpiry = (Get-Date).ToUniversalTime().AddDays(30).ToString('yyyy-MM-ddTHH:mmZ')
+
+# Get a full blob URI with a read-only user delegation SAS
+$PackageUri = az storage blob generate-sas `
   --account-name $StorageAccount `
   --container-name $Container `
   --name "MdatpWeeklyScan.zip" `
+  --permissions r `
+  --expiry $SasExpiry `
   --auth-mode login `
+  --as-user `
+  --full-uri `
   --output tsv
 ```
 
-### Grant Access to the Package for Azure VMs
+> **Security note:** The SAS in `$PackageUri` is the package retrieval credential for Arc machines. Limit expiry, keep permissions to `r`, publish a new package URI when you version the package, and remove stale SAS URLs from old assignments.
 
-For Azure VMs using a supported identity-based package access model, grant the required blob read permissions to the identity you use for package retrieval.
+### Example — Azure Government SAS Generation and Rotation
 
-**Enable system-assigned managed identity on Azure VMs:**
+Use sovereign cloud login before you upload the package or generate the SAS:
 
 ```powershell
-$ResourceGroup = "<resource-group>"
-$vms = az vm list `
-  --resource-group $ResourceGroup `
-  --query "[?storageProfile.osDisk.osType=='Linux'].name" `
-  --output tsv
-
-foreach ($vm in $vms) {
-  az vm identity assign `
-    --resource-group $ResourceGroup `
-    --name $vm
-}
+Connect-AzAccount -Environment AzureUSGovernment
+az cloud set --name AzureUSGovernment
+az login --environment AzureUSGovernment
 ```
 
-**Grant Storage Blob Data Reader to each Azure VM identity:**
+Generate a short-lived **user delegation SAS** for the current package version:
 
 ```powershell
 $StorageAccount = "<storage-account-name>"
-$ResourceGroup  = "<storage-resource-group>"
 $Container      = "guestconfig"
+$BlobName       = "MdatpWeeklyScan-1.0.0.zip"
+$SasExpiry      = (Get-Date).ToUniversalTime().AddDays(14).ToString('yyyy-MM-ddTHH:mmZ')
 
-$ContainerResourceId = "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$ResourceGroup/providers/Microsoft.Storage/storageAccounts/$StorageAccount/blobServices/default/containers/$Container"
-
-# Azure VMs
-$vms = az vm list `
-  --resource-group "<vm-resource-group>" `
-  --query "[?storageProfile.osDisk.osType=='Linux'].{name:name, identity:identity.principalId}" `
-  --output json | ConvertFrom-Json
-
-foreach ($vm in $vms) {
-  az role assignment create `
-    --assignee $vm.identity `
-    --role "Storage Blob Data Reader" `
-    --scope $ContainerResourceId
-}
-
+$PackageUri = az storage blob generate-sas `
+  --account-name $StorageAccount `
+  --container-name $Container `
+  --name $BlobName `
+  --permissions r `
+  --expiry $SasExpiry `
+  --auth-mode login `
+  --as-user `
+  --full-uri `
+  --output tsv
 ```
 
-**Arc note:** Do not assume the same system-assigned identity pattern works for Arc custom packages in this design. Validate Arc package access separately before adding Arc machines to Method 2 scope.
+Rotate the package cleanly when you publish an update:
+
+1. Upload the new package as a new blob name such as `MdatpWeeklyScan-1.0.1.zip`.
+2. Generate a new short-lived SAS for that new blob.
+3. Re-run `New-GuestConfigurationPolicy` and update the policy definition so `-ContentUri` points to the new SAS URL.
+4. Increment `-PolicyVersion` so the guest assignment picks up the new package.
+5. After all target machines report the expected version, delete the old assignment or old blob and let the previous SAS expire.
+
+If your storage account uses a private endpoint in Azure Government, validate DNS resolution for the blob endpoint under `*.blob.core.usgovcloudapi.net` from the Arc-connected network before assigning the policy.
 
 ---
 
@@ -364,32 +393,39 @@ New-GuestConfigurationPolicy `
   -ContentUri $PackageUri `
   -ContentHash $PackageHash `
   -DisplayName "Configure: MDATP Weekly Scan Cron on Linux" `
-  -Description "Audits and configures the MDATP weekly quick scan cron entry in the root crontab of Azure and Arc-connected Linux machines." `
+  -Description "Audits and configures the MDATP weekly quick scan cron entry in the root crontab of Arc-connected Linux machines." `
   -PolicyId (New-Guid).Guid `
   -PolicyVersion "1.0.0" `
   -Path "./MdatpWeeklyScanPolicy" `
   -Platform Linux `
   -Mode ApplyAndAutoCorrect
 
+# Locate the generated policy rule JSON in the output folder
+$GeneratedPolicyRules = Get-ChildItem './MdatpWeeklyScanPolicy' -Filter '*.json'
+if ($GeneratedPolicyRules.Count -ne 1) {
+  throw "Expected exactly one generated policy rule JSON file in ./MdatpWeeklyScanPolicy. Inspect the folder and set --rules to the correct file path."
+}
+$GeneratedPolicyRulesPath = $GeneratedPolicyRules[0].FullName
+
 # Create the policy definition at management group scope
 az policy definition create `
-  --name "configure-mdatp-scan-linux" `
+  --name "configure-mdatp-scan-arc-linux" `
   --display-name "Configure: MDATP Weekly Scan Cron on Linux" `
-  --description "Audits and configures the MDATP weekly quick scan cron entry on Azure and Arc-connected Linux machines." `
+  --description "Audits and configures the MDATP weekly quick scan cron entry on Arc-connected Linux machines." `
   --mode Indexed `
-  --rules "@./MdatpWeeklyScanPolicy/configure-mdatp-scan-linux.json" `
+  --rules "@$GeneratedPolicyRulesPath" `
   --management-group "<management-group-id>"
 
 # Get the definition ID
 $PolicyId = az policy definition show `
-  --name "configure-mdatp-scan-linux" `
+  --name "configure-mdatp-scan-arc-linux" `
   --management-group "<management-group-id>" `
   --query id --output tsv
 
 # Assign at management group scope
 # Note: --name must be 24 characters or fewer
 az policy assignment create `
-  --name "config-mdatp-cron-linux" `
+  --name "config-mdatp-cron-arc" `
   --display-name "Configure: MDATP Weekly Scan Cron on Linux" `
   --policy $PolicyId `
   --scope "/providers/Microsoft.Management/managementGroups/<management-group-id>" `
@@ -399,9 +435,13 @@ az policy assignment create `
   --role "Contributor"
 ```
 
-**Note:** `New-GuestConfigurationPolicy` generates the policy rule JSON in the output path. The filename will match the policy display name slug — adjust `--rules` if the generated filename differs.
+**Note:** The example above resolves the generated policy rule JSON from `./MdatpWeeklyScanPolicy` instead of assuming a specific filename.
 
-**Note:** This assignment example is intended for Azure VM scope. If you need Arc support, validate the generated policy parameters and package access model first.
+**Note:** Review the generated policy before creating the definition and confirm it only targets `Microsoft.HybridCompute/machines` resources.
+
+**Note:** If your storage account is reachable only through a private endpoint, confirm the Arc-connected machines resolve the blob FQDN to the private IP and have a route to that network over VPN or ExpressRoute.
+
+**Note:** In Azure Government, use sovereign cloud login and endpoint values consistently when generating the SAS URL and policy assignment.
 
 **Note:** `ApplyAndAutoCorrect` assignments require the managed identity to have `Contributor` on the target scope. Audit-only assignments only need `Reader`.
 
@@ -412,7 +452,7 @@ az policy assignment create `
 ```powershell
 az policy state list `
   --management-group "<management-group-id>" `
-  --filter "policyAssignmentName eq 'config-mdatp-cron-linux'" `
+  --filter "policyAssignmentName eq 'config-mdatp-cron-arc'" `
   --query "[].{machine:resourceId, state:complianceState, reason:complianceReasonCode}" `
   --output table
 ```
@@ -434,7 +474,7 @@ sudo crontab -l
 
 Expected output will include a line with the `# MDATP_WEEKLY_SCAN` marker, similar to:
 
-```
+```text
 47 3 * * 0 /usr/bin/mdatp scan quick # MDATP_WEEKLY_SCAN
 ```
 
@@ -455,7 +495,7 @@ mdatp health
 ```
 
 | Field | Expected value |
-|-------|----------------|
+| --- | --- |
 | `healthy` | `true` |
 | `real_time_protection_enabled` | `true` |
 | `org_id` | Your tenant/org ID |
@@ -472,9 +512,9 @@ A successful scan will output status messages and exit with code `0`.
 
 ## Updating the Scan Schedule
 
-### Method 1 — Azure Policy
+### Update Method 1 — Azure Policy
 
-The cron schedule is controlled by the `script` field inside `mdatp-scan-arc-policy-rule.json` and `mdatp-scan-vm-policy-rule.json`. The relevant lines are:
+The cron schedule is controlled by the `script` field inside `mdatp-scan-arc-policy-rule.json`. The relevant lines are:
 
 ```bash
 HOUR=$(( RANDOM % 12 ))       # Random hour between 0–11 (midnight to 11 AM)
@@ -488,7 +528,7 @@ The cron entry format is: `<minute> <hour> <day-of-month> <month> <day-of-week>`
 **To change the day** — replace the `0` in `* * 0`:
 
 | Value | Day |
-|-------|-----|
+| --- | --- |
 | `0` or `7` | Sunday |
 | `1` | Monday |
 | `2` | Tuesday |
@@ -498,6 +538,7 @@ The cron entry format is: `<minute> <hour> <day-of-month> <month> <day-of-week>`
 | `6` | Saturday |
 
 **To set a fixed time instead of random** — replace the `RANDOM` lines with hardcoded values:
+
 ```bash
 HOUR=2      # 2 AM
 MINUTE=30   # :30
@@ -509,29 +550,26 @@ To update it:
 
 > **Important:** All three steps below are required. Updating the policy definition alone (step 2) has no effect on machines that are already compliant — the policy will not re-run the script unless the Run Command resource is deleted first (step 3).
 
-1. Modify the `script` field in [`mdatp-scan-arc-policy-rule.json`](./mdatp-scan-arc-policy-rule.json), [`mdatp-scan-vm-policy-rule.json`](./mdatp-scan-vm-policy-rule.json), or both.
-2. Re-run `Deploy-MdatpScanPolicy.ps1` to push the updated script content to the policy definition.
+1. Modify the `script` field in [`mdatp-scan-arc-policy-rule.json`](./mdatp-scan-arc-policy-rule.json).
+2. Re-run `Deploy-MdatpScan-ArcPolicy.ps1` to push the updated script content to the policy definition.
 3. **Delete the existing Run Command resource on each machine.** The policy's `existenceCondition` checks whether a Run Command named `ScheduleMdatpQuickScan` exists with `provisioningState = Succeeded`. Once that condition is met, the policy considers the machine compliant and will **not** re-run the script — even if the script content has changed. Deleting the Run Command resource causes the machine to appear non-compliant and triggers a fresh deployment with the updated script.
+
    ```powershell
    # Arc machines
    Remove-AzConnectedMachineRunCommand `
      -ResourceGroupName "<resource-group>" `
      -MachineName "<machine-name>" `
      -RunCommandName "ScheduleMdatpQuickScan"
-
-   # Azure VMs
-   Remove-AzVMRunCommand `
-     -ResourceGroupName "<resource-group>" `
-     -VMName "<vm-name>" `
-     -RunCommandName "ScheduleMdatpQuickScan"
    ```
+
 4. Trigger remediation or wait for Azure Policy to reevaluate compliance. The policy will detect the missing Run Command, execute the updated script, and recreate the resource.
 
-### Method 2 — Machine Configuration
+### Update Method 2 — Machine Configuration
 
 Because the SetScript uses the `# MDATP_WEEKLY_SCAN` deduplication marker, re-applying the configuration overwrites the existing cron entry cleanly.
 
 To push an updated schedule:
+
 1. Modify the `SetScript` in `MdatpWeeklyScan.ps1` if needed
 2. Re-run Steps 3–4 with an incremented `PolicyVersion` in `New-GuestConfigurationPolicy`
 3. Machines will pick up the updated package on the next evaluation cycle
@@ -540,9 +578,13 @@ To push an updated schedule:
 
 ## Cleanup
 
-### Method 1 — Azure Policy
+### Cleanup Method 1 — Azure Policy
 
 Remove in this order: assignments first (they reference the definitions), then the definitions. If you granted RBAC manually or through the deployment script, remove those role assignments separately.
+
+Use the same assignment scope you originally deployed with. The policy definition is always created at the management group, but the assignment might be at management group, subscription, or resource group scope.
+
+**If the assignment was created at management group scope:**
 
 ```powershell
 $ManagementGroupId = '<management-group-id>'
@@ -550,16 +592,43 @@ $AssignmentScope   = "/providers/Microsoft.Management/managementGroups/$Manageme
 
 # 1 — Remove policy assignments
 Remove-AzPolicyAssignment -Name 'deploy-mdatp-cron-arc' -Scope $AssignmentScope
-Remove-AzPolicyAssignment -Name 'deploy-mdatp-cron-vm'  -Scope $AssignmentScope
 
 # 2 — Remove policy definitions
 Remove-AzPolicyDefinition -Name 'deploy-mdatp-scan-arc-linux' -ManagementGroupName $ManagementGroupId -Force
-Remove-AzPolicyDefinition -Name 'deploy-mdatp-scan-vm-linux'  -ManagementGroupName $ManagementGroupId -Force
 ```
 
-If you used `Deploy-MdatpScanPolicy.ps1`, remove the two managed-identity role assignments separately after deleting the assignments.
+**If the assignment was created at subscription scope:**
+
+```powershell
+$ManagementGroupId = '<management-group-id>'
+$AssignmentScope   = '/subscriptions/<subscription-id>'
+
+# 1 — Remove policy assignment
+Remove-AzPolicyAssignment -Name 'deploy-mdatp-cron-arc' -Scope $AssignmentScope
+
+# 2 — Remove policy definition
+Remove-AzPolicyDefinition -Name 'deploy-mdatp-scan-arc-linux' -ManagementGroupName $ManagementGroupId -Force
+```
+
+**If the assignment was created at resource group scope:**
+
+```powershell
+$ManagementGroupId = '<management-group-id>'
+$AssignmentScope   = '/subscriptions/<subscription-id>/resourceGroups/<resource-group-name>'
+
+# 1 — Remove policy assignment
+Remove-AzPolicyAssignment -Name 'deploy-mdatp-cron-arc' -Scope $AssignmentScope
+
+# 2 — Remove policy definition
+Remove-AzPolicyDefinition -Name 'deploy-mdatp-scan-arc-linux' -ManagementGroupName $ManagementGroupId -Force
+```
+
+If you created multiple assignments at different scopes, remove all of those assignments before deleting the management-group policy definition.
+
+If you used `Deploy-MdatpScan-ArcPolicy.ps1`, remove the Arc managed-identity role assignment separately after deleting the assignment.
 
 > **Note:** Removing the assignments and definitions does **not** remove the cron job from machines that were already remediated. The Run Command resource will also remain on each machine. To remove the cron job from machines, delete it manually or via a separate script:
+>
 > ```bash
 > sudo crontab -l | grep -Fv '# MDATP_WEEKLY_SCAN' | crontab -
 > ```
@@ -572,33 +641,28 @@ Remove-AzConnectedMachineRunCommand `
   -ResourceGroupName "<resource-group>" `
   -MachineName "<machine-name>" `
   -RunCommandName "ScheduleMdatpQuickScan"
-
-# Azure VMs
-Remove-AzVMRunCommand `
-  -ResourceGroupName "<resource-group>" `
-  -VMName "<vm-name>" `
-  -RunCommandName "ScheduleMdatpQuickScan"
 ```
 
 ---
 
-### Method 2 — Machine Configuration
+### Cleanup Method 2 — Machine Configuration
 
 ```powershell
 $ManagementGroupId = '<management-group-id>'
 
 # 1 — Remove policy assignment
 az policy assignment delete `
-  --name "config-mdatp-cron-linux" `
+  --name "config-mdatp-cron-arc" `
   --scope "/providers/Microsoft.Management/managementGroups/$ManagementGroupId"
 
 # 2 — Remove policy definition
 az policy definition delete `
-  --name "configure-mdatp-scan-linux" `
+  --name "configure-mdatp-scan-arc-linux" `
   --management-group $ManagementGroupId
 ```
 
 > **Note:** Removing the assignment stops future enforcement but does **not** remove the cron job from already-compliant machines. Remove it manually if needed:
+>
 > ```bash
 > sudo crontab -l | grep -Fv '# MDATP_WEEKLY_SCAN' | crontab -
 > ```
@@ -610,8 +674,10 @@ az policy definition delete `
 - [Azure Policy deployIfNotExists effect](https://learn.microsoft.com/en-us/azure/governance/policy/concepts/effect-deploy-if-not-exists)
 - [Remediate non-compliant resources with Azure Policy](https://learn.microsoft.com/en-us/azure/governance/policy/how-to/remediate-resources)
 - [Azure Machine Configuration prerequisites](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/overview/02-setup-prerequisites)
+- [Azure Machine Configuration network requirements](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/overview/03-network-requirements)
 - [Remediation options for machine configuration](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/concepts/remediation-options)
-- [Azure Machine Configuration extension](https://learn.microsoft.com/en-us/azure/virtual-machines/extensions/guest-configuration)
 - [How to provide secure access to custom machine configuration packages](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/how-to/develop-custom-package/5-access-package)
+- [Azure Arc network requirements](https://learn.microsoft.com/en-us/azure/azure-arc/network-requirements-consolidated)
+- [Use Azure Private Link to securely connect servers to Azure Arc](https://learn.microsoft.com/en-us/azure/azure-arc/servers/private-link-security)
 - [Schedule antivirus scans with crontab](https://learn.microsoft.com/en-us/defender-endpoint/schedule-antivirus-scan-crontab)
 - [Azure Government — available services](https://learn.microsoft.com/en-us/azure/azure-government/documentation-government-services)

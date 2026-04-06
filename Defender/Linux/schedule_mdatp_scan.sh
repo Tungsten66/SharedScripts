@@ -11,7 +11,7 @@
 #     - Manual remediation on individual machines
 #
 #   The primary deployment method for Azure VMs and Arc-connected Linux machines
-#   is Azure Machine Configuration (audit+set), documented in Configure-MdatpScan-Linux.md.
+#   is Azure Machine Configuration (audit+set), documented in Configure-MdatpScan-Arc-Linux.md.
 #   The SetScript in that package uses the same cron entry logic as this script.
 #   This file is not directly referenced by the Machine Configuration package.
 #

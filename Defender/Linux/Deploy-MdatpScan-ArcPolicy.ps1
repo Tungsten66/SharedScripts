@@ -22,11 +22,11 @@ at https://www.microsoft.com/en-us/legal/copyright.
 
 <#
 .SYNOPSIS
-    Deploys MDATP weekly scan cron policy definitions and assignments.
+    Deploys the Arc MDATP weekly scan cron policy definition and assignment.
 .DESCRIPTION
-    Creates two Azure Policy definitions (Arc Linux and Azure VM Linux) at management group
-    scope, assigns them with system-assigned managed identities, grants the required
-    role assignments, and can optionally create remediation tasks for existing machines
+    Creates the Azure Policy definition for Arc-connected Linux machines at management group
+    scope, assigns it with a system-assigned managed identity, grants the required
+    role assignment, and can optionally create a remediation task for existing machines
     — all in a single run.
 
     Run from Azure Cloud Shell (PowerShell) or a local PowerShell session with Az module.
@@ -37,7 +37,7 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Azure region for the policy assignment managed identities.
     Use 'eastus' for Azure Commercial, 'usgovvirginia' for Azure Government.
 .PARAMETER AssignmentScope
-    Scope at which both policies will be assigned. Defaults to the management group.
+    Scope at which the policy will be assigned. Defaults to the management group.
     Examples:
       /providers/Microsoft.Management/managementGroups/<mg-id>   (default)
       /subscriptions/<subscription-id>
@@ -45,34 +45,44 @@ at https://www.microsoft.com/en-us/legal/copyright.
 .PARAMETER Environment
     Azure cloud environment. 'AzureCloud' (default) or 'AzureUSGovernment'.
 .PARAMETER CreateRemediationTasks
-    Creates remediation tasks for both assignments using ReEvaluateCompliance so existing
-    matching machines are discovered and remediated in addition to future new or updated
-    machines.
+    Creates remediation tasks for the assignment so existing matching machines are
+    discovered and remediated in addition to future new or updated machines.
+.PARAMETER RemediationScope
+    Optional remediation scope or scopes. When omitted and the assignment scope is a
+    management group, the script automatically creates one remediation task per child
+    subscription under that management group. When omitted and the assignment scope is a
+    subscription or resource group, the assignment scope is used.
 .EXAMPLE
     # Assign at management group scope (covers all subscriptions under the MG)
-    .\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus'
+    .\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus'
 .EXAMPLE
     # Assign at a single subscription
-    .\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+    .\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
         -AssignmentScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
 .EXAMPLE
     # Assign at a resource group
-    .\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+    .\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
         -AssignmentScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy/resourceGroups/<resource-group-name>'
 .EXAMPLE
     # Azure Government
-    .\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'usgovvirginia' `
+    .\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'usgovvirginia' `
         -Environment 'AzureUSGovernment'
 .EXAMPLE
-    # Assign and immediately create remediation tasks for existing machines
-    .\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+    # Assign and immediately create remediation tasks for existing machines across child subscriptions
+    .\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
         -CreateRemediationTasks
+.EXAMPLE
+    # Assign at management group scope and remediate only a specific subscription
+    .\Deploy-MdatpScan-ArcPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+        -CreateRemediationTasks `
+        -RemediationScope '/subscriptions/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
 .NOTES
-    Name:           Deploy-MdatpScanPolicy.ps1
+    Name:           Deploy-MdatpScan-ArcPolicy.ps1
     Authors/Contributors: Nick OConnor
     DateCreated: 4-3-2026
     Revisions: v1 Initial script development
                v2 Optional remediation task creation for existing machines
+               v3 Arc-only deployment
 #>
 #Requires -Modules Az.Accounts, Az.Resources, Az.PolicyInsights
 
@@ -88,6 +98,8 @@ param (
 
     [ValidateSet('AzureCloud', 'AzureUSGovernment')]
     [string]$Environment = 'AzureCloud',
+
+    [string[]]$RemediationScope,
 
     [switch]$CreateRemediationTasks
 )
@@ -119,15 +131,77 @@ function Start-RemediationIfMissing {
     $existingRemediation = Get-AzPolicyRemediation -Name $Name -Scope $Scope -ErrorAction SilentlyContinue
     if ($existingRemediation) {
         Write-Host "  $Label remediation already exists, skipping"
-        return
+        return $false
     }
 
-    Start-AzPolicyRemediation `
-        -Name $Name `
-        -PolicyAssignmentId $PolicyAssignmentId `
-        -Scope $Scope `
-        -ResourceDiscoveryMode ReEvaluateCompliance | Out-Null
-    Write-Host "  $Label remediation started with ReEvaluateCompliance"
+    $isManagementGroupScope = $Scope.StartsWith('/providers/Microsoft.Management/managementGroups/', [System.StringComparison]::OrdinalIgnoreCase)
+    if ($isManagementGroupScope) {
+        throw "Remediation scope '$Scope' is a management group. Use subscription or resource group scope for remediation."
+    } else {
+        Start-AzPolicyRemediation `
+            -Name $Name `
+            -PolicyAssignmentId $PolicyAssignmentId `
+            -Scope $Scope `
+            -ResourceDiscoveryMode ReEvaluateCompliance | Out-Null
+        Write-Host "  $Label remediation started with ReEvaluateCompliance"
+    }
+    return $true
+}
+
+function Get-EffectiveRemediationScopes {
+    param(
+        [Parameter(Mandatory)]
+        [string]$AssignmentScope,
+
+        [Parameter(Mandatory)]
+        [string]$ManagementGroupId,
+
+        [string[]]$RequestedScopes
+    )
+
+    if ($RequestedScopes -and $RequestedScopes.Count -gt 0) {
+        return $RequestedScopes | Select-Object -Unique
+    }
+
+    $isManagementGroupScope = $AssignmentScope.StartsWith('/providers/Microsoft.Management/managementGroups/', [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $isManagementGroupScope) {
+        return @($AssignmentScope)
+    }
+
+    $subscriptions = Get-AzManagementGroupSubscription -GroupName $ManagementGroupId
+    if (-not $subscriptions) {
+        throw "No subscriptions were found under management group '$ManagementGroupId'. Specify -RemediationScope explicitly."
+    }
+
+    return $subscriptions | ForEach-Object { "/subscriptions/$($_.Name)" } | Select-Object -Unique
+}
+
+function Get-RemediationTaskName {
+    param(
+        [Parameter(Mandatory)]
+        [string]$BaseName,
+
+        [Parameter(Mandatory)]
+        [string]$Scope,
+
+        [Parameter(Mandatory)]
+        [int]$TotalScopeCount
+    )
+
+    if ($TotalScopeCount -le 1) {
+        return $BaseName
+    }
+
+    if ($Scope -match '^/subscriptions/([^/]+)$') {
+        return "$BaseName-$($Matches[1])"
+    }
+
+    if ($Scope -match '^/subscriptions/([^/]+)/resourceGroups/([^/]+)$') {
+        return "$BaseName-$($Matches[1])-$($Matches[2])"
+    }
+
+    $sanitizedScope = ($Scope -replace '[^A-Za-z0-9-]', '-') -replace '-{2,}', '-'
+    return "$BaseName-$sanitizedScope"
 }
 
 # --- Authenticate ---
@@ -145,16 +219,12 @@ if (-not $AssignmentScope) {
 $ScriptDir = $PSScriptRoot
 
 # --- Names ---
-$arcPolicyName     = 'deploy-mdatp-scan-arc-linux'
-$vmPolicyName      = 'deploy-mdatp-scan-vm-linux'
-$arcAssignmentName = 'deploy-mdatp-cron-arc'
-$vmAssignmentName  = 'deploy-mdatp-cron-vm'
+$arcPolicyName      = 'deploy-mdatp-scan-arc-linux'
+$arcAssignmentName  = 'deploy-mdatp-cron-arc'
 $arcRemediationName = 'remediate-arc'
-$vmRemediationName  = 'remediate-vm'
 
-# Connected Machine Resource Administrator / Virtual Machine Contributor
+# Connected Machine Resource Administrator
 $arcRoleId = 'cd570a14-e51a-42ad-bac8-bafd67325302'
-$vmRoleId  = '9980e02c-c2be-4d73-94e8-173b1dc7cf3c'
 
 # ============================================================
 # Step 1 — Policy definitions (management group scope)
@@ -162,27 +232,16 @@ $vmRoleId  = '9980e02c-c2be-4d73-94e8-173b1dc7cf3c'
 Write-Host "`n[1/3] Creating policy definitions at management group: $ManagementGroupId" -ForegroundColor Cyan
 
 $arcRule = Get-Content (Join-Path $ScriptDir 'mdatp-scan-arc-policy-rule.json') -Raw
-$vmRule  = Get-Content (Join-Path $ScriptDir 'mdatp-scan-vm-policy-rule.json')  -Raw
 
 $arcDef = New-AzPolicyDefinition `
     -Name        $arcPolicyName `
     -DisplayName 'Deploy: MDATP Weekly Scan Cron — Arc Linux' `
-    -Description 'Deploys the MDATP weekly quick scan cron entry to Arc-connected Linux machines via Run Command. Requires the MDE.Linux extension to be provisioned.' `
+    -Description 'Deploys the MDATP weekly quick scan cron entry to Arc-connected Linux machines via Run Command. The script validates that mdatp exists on the machine before installing the cron entry.' `
     -Policy      $arcRule `
     -Mode        'Indexed' `
     -ManagementGroupName $ManagementGroupId
 
 Write-Host "  Arc definition: $($arcDef.Id)"
-
-$vmDef = New-AzPolicyDefinition `
-    -Name        $vmPolicyName `
-    -DisplayName 'Deploy: MDATP Weekly Scan Cron — Azure VM Linux' `
-    -Description 'Deploys the MDATP weekly quick scan cron entry to Azure Linux VMs via Run Command. Requires the MDE.Linux extension to be provisioned.' `
-    -Policy      $vmRule `
-    -Mode        'Indexed' `
-    -ManagementGroupName $ManagementGroupId
-
-Write-Host "  VM definition:  $($vmDef.Id)"
 
 # ============================================================
 # Step 2 — Policy assignments
@@ -208,24 +267,6 @@ if (-not $arcAssignment) {
 $arcPrincipalId = Get-AssignmentPrincipalId $arcAssignment.Id
 Write-Host "  Arc assignment principal: $arcPrincipalId"
 
-$vmAssignment = Get-AzPolicyAssignment -Name $vmAssignmentName -Scope $AssignmentScope -ErrorAction SilentlyContinue
-if (-not $vmAssignment) {
-    New-AzPolicyAssignment `
-        -Name             $vmAssignmentName `
-        -DisplayName      'Deploy: MDATP Weekly Scan Cron — Azure VM Linux' `
-        -PolicyDefinition $vmDef `
-        -Scope            $AssignmentScope `
-        -Location         $Location `
-        -IdentityType     'SystemAssigned' | Out-Null
-    $vmAssignment = Get-AzPolicyAssignment -Name $vmAssignmentName -Scope $AssignmentScope
-    $newAssignmentsCreated = $true
-    Write-Host "  VM assignment created."
-} else {
-    Write-Host "  VM assignment already exists."
-}
-$vmPrincipalId = Get-AssignmentPrincipalId $vmAssignment.Id
-Write-Host "  VM assignment principal:  $vmPrincipalId"
-
 # Allow time for new managed identity service principals to propagate in Entra ID
 if ($newAssignmentsCreated) {
     Write-Host "  Waiting 30 seconds for managed identity propagation..." -ForegroundColor Yellow
@@ -249,34 +290,26 @@ try {
     } else { throw }
 }
 
-$retries = 3
-foreach ($attempt in 1..$retries) {
-    try {
-        New-AzRoleAssignment `
-            -ObjectId         $vmPrincipalId `
-            -RoleDefinitionId $vmRoleId `
-            -Scope            $AssignmentScope | Out-Null
-        Write-Host "  VM:  Virtual Machine Contributor assigned"
-        break
-    } catch {
-        if ($_.Exception.Message -match 'already exists|Conflict') {
-            Write-Host "  VM:  Role assignment already exists, skipping"
-            break
-        } elseif ($attempt -lt $retries) {
-            Write-Host "  VM:  Role assignment attempt $attempt failed, retrying in 15 seconds..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 15
-        } else { throw }
-    }
-}
-
 # ============================================================
 # Step 4 — Remediation tasks (optional)
 # ============================================================
 if ($CreateRemediationTasks) {
-    Write-Host "`n[4/4] Creating remediation tasks at scope: $AssignmentScope" -ForegroundColor Cyan
+    $effectiveRemediationScopes = @(Get-EffectiveRemediationScopes -AssignmentScope $AssignmentScope -ManagementGroupId $ManagementGroupId -RequestedScopes $RemediationScope)
+    Write-Host "`n[4/4] Creating remediation tasks at scope(s): $($effectiveRemediationScopes -join ', ')" -ForegroundColor Cyan
 
-    Start-RemediationIfMissing -Name $arcRemediationName -PolicyAssignmentId $arcAssignment.Id -Scope $AssignmentScope -Label 'Arc'
-    Start-RemediationIfMissing -Name $vmRemediationName -PolicyAssignmentId $vmAssignment.Id -Scope $AssignmentScope -Label 'VM'
+    $startedRemediations = New-Object System.Collections.Generic.List[string]
+    $skippedRemediations = New-Object System.Collections.Generic.List[string]
+
+    foreach ($scope in $effectiveRemediationScopes) {
+        $taskName = Get-RemediationTaskName -BaseName $arcRemediationName -Scope $scope -TotalScopeCount $effectiveRemediationScopes.Count
+        $label = "Arc [$scope]"
+        $started = Start-RemediationIfMissing -Name $taskName -PolicyAssignmentId $arcAssignment.Id -Scope $scope -Label $label
+        if ($started) {
+            $startedRemediations.Add("$taskName @ $scope") | Out-Null
+        } else {
+            $skippedRemediations.Add("$taskName @ $scope") | Out-Null
+        }
+    }
 }
 
 # ============================================================
@@ -285,10 +318,21 @@ if ($CreateRemediationTasks) {
 Write-Host "`nDeployment complete." -ForegroundColor Green
 Write-Host ""
 if ($CreateRemediationTasks) {
-    Write-Host "Remediation tasks were started for existing machines using ReEvaluateCompliance." -ForegroundColor Green
+    if ($startedRemediations.Count -gt 0) {
+        Write-Host "Started remediation tasks using ReEvaluateCompliance at subscription or resource group scope:" -ForegroundColor Green
+        foreach ($entry in $startedRemediations) {
+            Write-Host "  $entry" -ForegroundColor Green
+        }
+    }
+    if ($skippedRemediations.Count -gt 0) {
+        Write-Host "Skipped existing remediation tasks:" -ForegroundColor Yellow
+        foreach ($entry in $skippedRemediations) {
+            Write-Host "  $entry" -ForegroundColor Yellow
+        }
+        Write-Host "Delete the existing remediation task or use a different remediation scope if you need to rerun remediation immediately." -ForegroundColor Yellow
+    }
 } else {
     Write-Host "Existing machines require remediation or a qualifying resource update before DeployIfNotExists will apply." -ForegroundColor Yellow
     Write-Host "To remediate existing machines without waiting for future create/update events:" 
-    Write-Host "  Start-AzPolicyRemediation -Name '$arcRemediationName' -PolicyAssignmentId '$($arcAssignment.Id)' -Scope '$AssignmentScope' -ResourceDiscoveryMode ReEvaluateCompliance"
-    Write-Host "  Start-AzPolicyRemediation -Name '$vmRemediationName'  -PolicyAssignmentId '$($vmAssignment.Id)'  -Scope '$AssignmentScope' -ResourceDiscoveryMode ReEvaluateCompliance"
+    Write-Host "  Start-AzPolicyRemediation -Name '$arcRemediationName' -PolicyAssignmentId '$($arcAssignment.Id)' -Scope '/subscriptions/<subscription-id>' -ResourceDiscoveryMode ReEvaluateCompliance"
 }

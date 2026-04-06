@@ -8,24 +8,6 @@
       {
         "field": "Microsoft.HybridCompute/machines/osName",
         "contains": "linux"
-      },
-      {
-        "count": {
-          "field": "Microsoft.HybridCompute/machines/extensions[*]",
-          "where": {
-            "allOf": [
-              {
-                "field": "Microsoft.HybridCompute/machines/extensions[*].type",
-                "equals": "MDE.Linux"
-              },
-              {
-                "field": "Microsoft.HybridCompute/machines/extensions[*].status.code",
-                "equals": "ProvisioningState/succeeded"
-              }
-            ]
-          }
-        },
-        "greaterOrEquals": 1
       }
     ]
   },
