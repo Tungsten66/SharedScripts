@@ -4,10 +4,10 @@ Deploys a weekly Microsoft Defender for Endpoint (MDATP) quick scan schedule to 
 
 Two methods are covered:
 
-- **Method 1 — Azure Policy (DeployIfNotExists)**: Deploys the cron job to target machines via `DeployIfNotExists` policy. Covers machines at assignment scope — current and future. Does not re-apply if the cron job is later removed (compliance reflects Run Command execution state, not cron job presence).
-- **Method 2 — Machine Configuration (Continuous)**: Uses Azure Policy with `ApplyAndAutoCorrect` to continuously enforce the cron job. Covers all machines at assignment scope — current and future — and automatically reinstalls the cron entry if it is removed. Requires more setup but is the recommended long-term solution.
+- **Method 1 — Azure Policy (DeployIfNotExists)**: Deploys the cron job to target machines via `DeployIfNotExists` policy. New or updated machines are handled by the assignment. Existing machines require a remediation task. It does not re-apply if the cron job is later removed because compliance reflects Run Command execution state, not cron job presence.
+- **Method 2 — Machine Configuration (Continuous)**: Uses Azure Policy with `ApplyAndAutoCorrect` to continuously enforce the cron job. Under the tenant controls described in this guide, this method is currently practical for **Azure Linux VMs**. For **Arc-connected Linux servers**, private custom package access requires a SAS URL or a supported identity pattern that is not available here, so Arc coverage should be treated as unsupported until validated in your environment.
 
-**Recommended approach:** Use Method 2 for all environments. Use Method 1 when you want policy-based coverage without the complexity of Machine Configuration package authoring.
+**Recommended approach:** Use Method 1 for mixed Azure VM and Arc coverage today. Use Method 2 for Azure VM-only continuous enforcement when you need drift correction.
 
 ---
 
@@ -36,7 +36,7 @@ All scripts in this guide are written for **PowerShell**. Run from Azure Cloud S
 
 ## Method 1 — Azure Policy (DeployIfNotExists)
 
-Uses Azure Policy `DeployIfNotExists` to deploy the cron job to target machines via Run Command. The policy evaluates every ~24 hours and deploys to any machine that hasn't had a successful run.
+Uses Azure Policy `DeployIfNotExists` to deploy the cron job to target machines via Run Command. New or updated matching machines can be handled automatically after policy evaluation. Existing matching machines require a remediation task.
 
 **Important limitation:** Compliance state reflects whether the Run Command executed successfully — not whether the cron job currently exists. If the cron job is later removed manually, the machine remains Compliant (the Run Command resource already succeeded). Use Method 2 if continuous drift correction is required.
 
@@ -87,40 +87,54 @@ Open Azure Cloud Shell (PowerShell) or a local PowerShell session, then run:
     -Environment 'AzureUSGovernment'
 ```
 
-The script runs in three phases and prints progress for each:
+The script runs in three phases by default and prints progress for each:
 
 1. Creates both policy definitions at the management group
 2. Creates both policy assignments at the specified scope with system-assigned managed identities
 3. Grants the required role assignments to each managed identity
 
-Re-running the script is safe — definitions are updated in-place if they already exist, existing assignments are detected and skipped, and duplicate role assignments are silently ignored.
+If you use `-CreateRemediationTasks`, the script adds a fourth phase that starts remediation for existing machines with `ReEvaluateCompliance`.
+
+Re-running the script is safe for definitions, assignments, and role assignments. If you use `-CreateRemediationTasks`, existing remediation task names are detected and skipped.
 
 ---
 
 ### Check Compliance
 
-After assignment, Azure Policy evaluates machines within ~24 hours. To view compliance state:
+After assignment, Azure Policy compliance can take some time to refresh. To view compliance state:
 
 **Azure Policy** → **Compliance** → filter by assignment name `deploy-mdatp-cron-arc` or `deploy-mdatp-cron-vm`.
 
 ### Trigger Immediate Remediation
 
-To deploy to non-compliant machines without waiting for the next evaluation cycle:
+To deploy to existing non-compliant machines without waiting for a later policy cycle:
 
 **Azure Policy** → **Remediation** → **New remediation task** → select the assignment → **Remediate**.
 
+For PowerShell, use `ReEvaluateCompliance` so existing resources are rediscovered before remediation starts:
+
+```powershell
+Start-AzPolicyRemediation `
+  -Name 'remediate-arc' `
+  -PolicyAssignmentId '<arc-policy-assignment-id>' `
+  -Scope '<assignment-scope>' `
+  -ResourceDiscoveryMode ReEvaluateCompliance
+```
+
 ---
 
-## Method 2 — Machine Configuration (Continuous)
+## Method 2 — Machine Configuration (Continuous, Azure VMs)
 
-Uses Azure Policy `ApplyAndAutoCorrect` to continuously enforce the cron job on every evaluation cycle (~24 hours). Covers all machines at assignment scope — current and future. If the cron job is removed, it is reinstalled automatically on the next cycle without any manual action.
+Uses Azure Policy `ApplyAndAutoCorrect` to continuously enforce the cron job on Azure Linux VMs. The guest assignment is checked every 5 minutes, and settings are rechecked about every 15 minutes after assignment. If the cron job is removed, it is reinstalled on the next machine configuration evaluation.
+
+**Important scope note:** Under the storage restrictions described in this guide, Method 2 should be treated as **Azure VM-only**. Arc-connected Linux servers require a package access model that is not covered here.
 
 ### How It Works
 
 1. A custom Machine Configuration package is built from an InSpec audit profile and a DSC `nxScript` set script
 2. The package is published to an Azure Storage Account
 3. An Azure Policy (`ApplyAndAutoCorrect`) definition is created from the package and assigned at management group scope
-4. The `AzurePolicyforLinux` extension on each machine runs the package every ~24 hours:
+4. The Machine Configuration agent on each Azure VM processes the guest assignment:
    - **Audit**: InSpec checks whether the `# MDATP_WEEKLY_SCAN` cron entry exists in the root crontab
    - **Set**: If the cron entry is missing, the `nxScript` SetScript installs it automatically
 5. Machines with the cron job present are **Compliant**; machines with it absent are **Non-compliant** and remediated on the next evaluation cycle — no manual remediation task required
@@ -134,45 +148,24 @@ Uses Azure Policy `ApplyAndAutoCorrect` to continuously enforce the cron job on 
   Install-Module nx -Force          # Linux DSC resources (provides nxScript)
   ```
 - **Azure Storage Account** to host the configuration package
-  - Public blob access and shared key (SAS token) access **must not be used** — tenant policies `StorageAccount_BlobAnonymousAccess_Modify` and `StorageAccount_DisableLocalAuth_Modify` enforce `allowBlobPublicAccess = false` and `allowSharedKeyAccess = false`
+  - Public blob access must remain disabled
+  - If your tenant blocks SAS for storage access, treat this method as Azure VM-only unless you validate an alternative supported package access pattern
   - All storage operations must use **Azure AD authentication** (`--auth-mode login`)
-  - Each target machine downloads the package using its **system-assigned managed identity** — grant `Storage Blob Data Reader` on the container to each machine identity (see Step 3)
+  - Package access for guest assignments must follow Microsoft-supported custom package access guidance. Azure VMs can use a supported identity-based path. Arc package access should be validated separately before rollout.
   - **Azure VMs:** System-assigned managed identity must be enabled on each VM
-  - **Arc machines:** System-assigned managed identity is enabled automatically
 - **MDE deployed** on each Linux machine (`/usr/bin/mdatp` present) before the package runs
-- **`AzurePolicyforLinux` extension** deployed on each target machine (see Step 1)
+- **Machine Configuration extension** deployed on each target Azure VM (see Step 1)
 - **RBAC roles:**
   - `Resource Policy Contributor` — to create and assign the policy
   - `Management Group Contributor` — to create the definition at management group scope
   - `Storage Blob Data Contributor` — to upload the package to the storage account
   - `Contributor` on target machines/scope — required for the managed identity to apply configuration (audit+set requires write access, unlike audit-only)
 
-### Step 1 — Deploy the Machine Configuration Agent
+### Step 1 — Deploy the Machine Configuration Agent on Azure VMs
 
-Each machine requires the `AzurePolicyforLinux` extension. Check for it in the portal:
+Each Azure VM requires the Machine Configuration extension. Check for `AzurePolicyforLinux` in the portal:
 
-- **Arc machines:** Azure Arc → Servers → *select machine* → **Extensions**
 - **Azure VMs:** Virtual Machines → *select VM* → **Extensions + applications**
-
-### Arc-connected machines
-
-```powershell
-$ResourceGroup = "<resource-group>"
-$machines = az connectedmachine list `
-  --resource-group $ResourceGroup `
-  --query "[].{name:name, location:location}" `
-  --output json | ConvertFrom-Json
-
-foreach ($machine in $machines) {
-  az connectedmachine extension create `
-    --resource-group $ResourceGroup `
-    --machine-name $machine.name `
-    --name "AzurePolicyforLinux" `
-    --type "AzurePolicyforLinux" `
-    --publisher "Microsoft.GuestConfiguration" `
-    --location $machine.location
-}
-```
 
 ### Azure VMs
 
@@ -187,11 +180,14 @@ foreach ($vm in $vms) {
   az vm extension set `
     --resource-group $ResourceGroup `
     --vm-name $vm.name `
-    --name "AzurePolicyforLinux" `
+    --name "ConfigurationForLinux" `
+    --extension-instance-name "AzurePolicyforLinux" `
     --publisher "Microsoft.GuestConfiguration" `
     --enable-auto-upgrade true
 }
 ```
+
+**Arc note:** Arc-enabled servers include guest configuration services through the Connected Machine agent, but custom package rollout for this method should not be assumed to work under the tenant storage restrictions in this guide without separate validation.
 
 ---
 
@@ -274,7 +270,7 @@ end
 
 ### Step 3 — Build and Publish the Package
 
-> **Tenant policy compliance:** Tenant policies block shared key access and anonymous blob access on all storage accounts. All `az storage` commands below use `--auth-mode login` (Azure AD). SAS tokens cannot be used — the `contentUri` must be a plain blob URI authenticated by each machine's system-assigned managed identity at download time.
+> **Tenant policy compliance:** Tenant policies block shared key access and anonymous blob access on all storage accounts. All `az storage` commands below use `--auth-mode login` (Azure AD) for upload and management operations. Package download for guest assignments must still follow a Microsoft-supported custom package access pattern. If your tenant disallows SAS and you need Arc support, validate that design separately before rollout.
 
 ```powershell
 # Compile the DSC configuration (if not already done in Step 2)
@@ -303,7 +299,7 @@ az storage blob upload `
   --auth-mode login `
   --overwrite
 
-# Get the plain blob URI (no SAS token — machines authenticate using their managed identity)
+# Get the blob URI for the package
 $PackageUri = az storage blob url `
   --account-name $StorageAccount `
   --container-name $Container `
@@ -312,11 +308,11 @@ $PackageUri = az storage blob url `
   --output tsv
 ```
 
-### Grant Storage Blob Data Reader to Machine Identities
+### Grant Access to the Package for Azure VMs
 
-Each machine uses its system-assigned managed identity to download the package on every evaluation cycle. Grant `Storage Blob Data Reader` on the container to all target machine identities.
+For Azure VMs using a supported identity-based package access model, grant the required blob read permissions to the identity you use for package retrieval.
 
-**Enable system-assigned managed identity on Azure VMs** (Arc machines have this automatically):
+**Enable system-assigned managed identity on Azure VMs:**
 
 ```powershell
 $ResourceGroup = "<resource-group>"
@@ -332,7 +328,7 @@ foreach ($vm in $vms) {
 }
 ```
 
-**Grant Storage Blob Data Reader to each machine's managed identity:**
+**Grant Storage Blob Data Reader to each Azure VM identity:**
 
 ```powershell
 $StorageAccount = "<storage-account-name>"
@@ -354,19 +350,9 @@ foreach ($vm in $vms) {
     --scope $ContainerResourceId
 }
 
-# Arc machines
-$arcMachines = az connectedmachine list `
-  --resource-group "<arc-resource-group>" `
-  --query "[].{name:name, identity:identity.principalId}" `
-  --output json | ConvertFrom-Json
-
-foreach ($machine in $arcMachines) {
-  az role assignment create `
-    --assignee $machine.identity `
-    --role "Storage Blob Data Reader" `
-    --scope $ContainerResourceId
-}
 ```
+
+**Arc note:** Do not assume the same system-assigned identity pattern works for Arc custom packages in this design. Validate Arc package access separately before adding Arc machines to Method 2 scope.
 
 ---
 
@@ -415,6 +401,8 @@ az policy assignment create `
 
 **Note:** `New-GuestConfigurationPolicy` generates the policy rule JSON in the output path. The filename will match the policy display name slug — adjust `--rules` if the generated filename differs.
 
+**Note:** This assignment example is intended for Azure VM scope. If you need Arc support, validate the generated policy parameters and package access model first.
+
 **Note:** `ApplyAndAutoCorrect` assignments require the managed identity to have `Contributor` on the target scope. Audit-only assignments only need `Reader`.
 
 ---
@@ -429,7 +417,8 @@ az policy state list `
   --output table
 ```
 
-Machines marked **Non-compliant** will be remediated automatically on the next evaluation cycle (~24 hours). No manual remediation task is required — this is a key difference from the DeployIfNotExists approach.
+Machines marked **Non-compliant** are remediated automatically by the Machine Configuration agent. No manual remediation task is required — this is a key difference from the DeployIfNotExists approach.
+Machines marked **Non-compliant** are corrected by the Machine Configuration agent on its next evaluation. Guest assignments are typically checked every 5 minutes and settings are rechecked about every 15 minutes.
 
 ---
 
@@ -536,7 +525,7 @@ To update it:
      -VMName "<vm-name>" `
      -RunCommandName "ScheduleMdatpQuickScan"
    ```
-4. Trigger remediation or wait for the next evaluation cycle (~24 hours). The policy will detect the missing Run Command, execute the updated script, and recreate the resource.
+4. Trigger remediation or wait for Azure Policy to reevaluate compliance. The policy will detect the missing Run Command, execute the updated script, and recreate the resource.
 
 ### Method 2 — Machine Configuration
 
@@ -553,13 +542,13 @@ To push an updated schedule:
 
 ### Method 1 — Azure Policy
 
-Remove in this order: assignments first (they reference the definitions), then the definitions. Role assignments are removed automatically when the policy assignment is deleted.
+Remove in this order: assignments first (they reference the definitions), then the definitions. If you granted RBAC manually or through the deployment script, remove those role assignments separately.
 
 ```powershell
 $ManagementGroupId = '<management-group-id>'
 $AssignmentScope   = "/providers/Microsoft.Management/managementGroups/$ManagementGroupId"
 
-# 1 — Remove policy assignments (also removes the managed identity role assignments)
+# 1 — Remove policy assignments
 Remove-AzPolicyAssignment -Name 'deploy-mdatp-cron-arc' -Scope $AssignmentScope
 Remove-AzPolicyAssignment -Name 'deploy-mdatp-cron-vm'  -Scope $AssignmentScope
 
@@ -567,6 +556,8 @@ Remove-AzPolicyAssignment -Name 'deploy-mdatp-cron-vm'  -Scope $AssignmentScope
 Remove-AzPolicyDefinition -Name 'deploy-mdatp-scan-arc-linux' -ManagementGroupName $ManagementGroupId -Force
 Remove-AzPolicyDefinition -Name 'deploy-mdatp-scan-vm-linux'  -ManagementGroupName $ManagementGroupId -Force
 ```
+
+If you used `Deploy-MdatpScanPolicy.ps1`, remove the two managed-identity role assignments separately after deleting the assignments.
 
 > **Note:** Removing the assignments and definitions does **not** remove the cron job from machines that were already remediated. The Run Command resource will also remain on each machine. To remove the cron job from machines, delete it manually or via a separate script:
 > ```bash
@@ -616,14 +607,11 @@ az policy definition delete `
 
 ## References
 
-- [Azure Machine Configuration overview](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/overview)
-- [Azure Machine Configuration — authoring packages](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-create)
-- [Azure Machine Configuration — policy effects (ApplyAndAutoCorrect)](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-policy-effects)
-- [Azure Machine Configuration — Arc-connected servers](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-arc)
-- [Schedule antivirus scans with crontab – Microsoft Learn](https://learn.microsoft.com/en-us/defender-endpoint/schedule-antivirus-scan-crontab)
-- [Azure Government — available services](https://learn.microsoft.com/en-us/azure/azure-government/documentation-government-services)
-- [Azure Machine Configuration — authoring packages](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-create)
-- [Azure Machine Configuration — policy effects (ApplyAndAutoCorrect)](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-policy-effects)
-- [Azure Machine Configuration — Arc-connected servers](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/machine-configuration-arc)
-- [Schedule antivirus scans with crontab – Microsoft Learn](https://learn.microsoft.com/en-us/defender-endpoint/schedule-antivirus-scan-crontab)
+- [Azure Policy deployIfNotExists effect](https://learn.microsoft.com/en-us/azure/governance/policy/concepts/effect-deploy-if-not-exists)
+- [Remediate non-compliant resources with Azure Policy](https://learn.microsoft.com/en-us/azure/governance/policy/how-to/remediate-resources)
+- [Azure Machine Configuration prerequisites](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/overview/02-setup-prerequisites)
+- [Remediation options for machine configuration](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/concepts/remediation-options)
+- [Azure Machine Configuration extension](https://learn.microsoft.com/en-us/azure/virtual-machines/extensions/guest-configuration)
+- [How to provide secure access to custom machine configuration packages](https://learn.microsoft.com/en-us/azure/governance/machine-configuration/how-to/develop-custom-package/5-access-package)
+- [Schedule antivirus scans with crontab](https://learn.microsoft.com/en-us/defender-endpoint/schedule-antivirus-scan-crontab)
 - [Azure Government — available services](https://learn.microsoft.com/en-us/azure/azure-government/documentation-government-services)

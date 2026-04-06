@@ -8,6 +8,24 @@
       {
         "field": "Microsoft.Compute/virtualMachines/storageProfile.osDisk.osType",
         "equals": "Linux"
+      },
+      {
+        "count": {
+          "field": "Microsoft.Compute/virtualMachines/extensions[*]",
+          "where": {
+            "allOf": [
+              {
+                "field": "Microsoft.Compute/virtualMachines/extensions[*].type",
+                "equals": "MDE.Linux"
+              },
+              {
+                "field": "Microsoft.Compute/virtualMachines/extensions[*].provisioningState",
+                "equals": "Succeeded"
+              }
+            ]
+          }
+        },
+        "greaterOrEquals": 1
       }
     ]
   },

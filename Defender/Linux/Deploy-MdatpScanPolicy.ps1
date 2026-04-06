@@ -25,8 +25,9 @@ at https://www.microsoft.com/en-us/legal/copyright.
     Deploys MDATP weekly scan cron policy definitions and assignments.
 .DESCRIPTION
     Creates two Azure Policy definitions (Arc Linux and Azure VM Linux) at management group
-    scope, assigns them with system-assigned managed identities, and grants the required
-    role assignments — all in a single run.
+    scope, assigns them with system-assigned managed identities, grants the required
+    role assignments, and can optionally create remediation tasks for existing machines
+    — all in a single run.
 
     Run from Azure Cloud Shell (PowerShell) or a local PowerShell session with Az module.
 .PARAMETER ManagementGroupId
@@ -43,6 +44,10 @@ at https://www.microsoft.com/en-us/legal/copyright.
       /subscriptions/<subscription-id>/resourceGroups/<rg-name>
 .PARAMETER Environment
     Azure cloud environment. 'AzureCloud' (default) or 'AzureUSGovernment'.
+.PARAMETER CreateRemediationTasks
+    Creates remediation tasks for both assignments using ReEvaluateCompliance so existing
+    matching machines are discovered and remediated in addition to future new or updated
+    machines.
 .EXAMPLE
     # Assign at management group scope (covers all subscriptions under the MG)
     .\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus'
@@ -58,13 +63,18 @@ at https://www.microsoft.com/en-us/legal/copyright.
     # Azure Government
     .\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'usgovvirginia' `
         -Environment 'AzureUSGovernment'
+.EXAMPLE
+    # Assign and immediately create remediation tasks for existing machines
+    .\Deploy-MdatpScanPolicy.ps1 -ManagementGroupId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Location 'eastus' `
+        -CreateRemediationTasks
 .NOTES
     Name:           Deploy-MdatpScanPolicy.ps1
     Authors/Contributors: Nick OConnor
     DateCreated: 4-3-2026
     Revisions: v1 Initial script development
+               v2 Optional remediation task creation for existing machines
 #>
-#Requires -Modules Az.Accounts, Az.Resources
+#Requires -Modules Az.Accounts, Az.Resources, Az.PolicyInsights
 
 [CmdletBinding()]
 param (
@@ -77,7 +87,9 @@ param (
     [string]$AssignmentScope,
 
     [ValidateSet('AzureCloud', 'AzureUSGovernment')]
-    [string]$Environment = 'AzureCloud'
+    [string]$Environment = 'AzureCloud',
+
+    [switch]$CreateRemediationTasks
 )
 
 Set-StrictMode -Version Latest
@@ -87,6 +99,35 @@ $ErrorActionPreference = 'Stop'
 function Get-AssignmentPrincipalId ([string]$AssignmentId) {
     $resp = Invoke-AzRestMethod -Method GET -Path "${AssignmentId}?api-version=2024-04-01"
     return ($resp.Content | ConvertFrom-Json).identity.principalId
+}
+
+function Start-RemediationIfMissing {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name,
+
+        [Parameter(Mandatory)]
+        [string]$PolicyAssignmentId,
+
+        [Parameter(Mandatory)]
+        [string]$Scope,
+
+        [Parameter(Mandatory)]
+        [string]$Label
+    )
+
+    $existingRemediation = Get-AzPolicyRemediation -Name $Name -Scope $Scope -ErrorAction SilentlyContinue
+    if ($existingRemediation) {
+        Write-Host "  $Label remediation already exists, skipping"
+        return
+    }
+
+    Start-AzPolicyRemediation `
+        -Name $Name `
+        -PolicyAssignmentId $PolicyAssignmentId `
+        -Scope $Scope `
+        -ResourceDiscoveryMode ReEvaluateCompliance | Out-Null
+    Write-Host "  $Label remediation started with ReEvaluateCompliance"
 }
 
 # --- Authenticate ---
@@ -108,6 +149,8 @@ $arcPolicyName     = 'deploy-mdatp-scan-arc-linux'
 $vmPolicyName      = 'deploy-mdatp-scan-vm-linux'
 $arcAssignmentName = 'deploy-mdatp-cron-arc'
 $vmAssignmentName  = 'deploy-mdatp-cron-vm'
+$arcRemediationName = 'remediate-arc'
+$vmRemediationName  = 'remediate-vm'
 
 # Connected Machine Resource Administrator / Virtual Machine Contributor
 $arcRoleId = 'cd570a14-e51a-42ad-bac8-bafd67325302'
@@ -227,10 +270,25 @@ foreach ($attempt in 1..$retries) {
 }
 
 # ============================================================
+# Step 4 — Remediation tasks (optional)
+# ============================================================
+if ($CreateRemediationTasks) {
+    Write-Host "`n[4/4] Creating remediation tasks at scope: $AssignmentScope" -ForegroundColor Cyan
+
+    Start-RemediationIfMissing -Name $arcRemediationName -PolicyAssignmentId $arcAssignment.Id -Scope $AssignmentScope -Label 'Arc'
+    Start-RemediationIfMissing -Name $vmRemediationName -PolicyAssignmentId $vmAssignment.Id -Scope $AssignmentScope -Label 'VM'
+}
+
+# ============================================================
 # Done
 # ============================================================
-Write-Host "`nDeployment complete. Machines will be evaluated within ~24 hours." -ForegroundColor Green
+Write-Host "`nDeployment complete." -ForegroundColor Green
 Write-Host ""
-Write-Host "To trigger immediate remediation without waiting for the evaluation cycle:"
-Write-Host "  Start-AzPolicyRemediation -Name 'remediate-arc' -PolicyAssignmentId '$($arcAssignment.Id)' -Scope '$AssignmentScope'"
-Write-Host "  Start-AzPolicyRemediation -Name 'remediate-vm'  -PolicyAssignmentId '$($vmAssignment.Id)'  -Scope '$AssignmentScope'"
+if ($CreateRemediationTasks) {
+    Write-Host "Remediation tasks were started for existing machines using ReEvaluateCompliance." -ForegroundColor Green
+} else {
+    Write-Host "Existing machines require remediation or a qualifying resource update before DeployIfNotExists will apply." -ForegroundColor Yellow
+    Write-Host "To remediate existing machines without waiting for future create/update events:" 
+    Write-Host "  Start-AzPolicyRemediation -Name '$arcRemediationName' -PolicyAssignmentId '$($arcAssignment.Id)' -Scope '$AssignmentScope' -ResourceDiscoveryMode ReEvaluateCompliance"
+    Write-Host "  Start-AzPolicyRemediation -Name '$vmRemediationName'  -PolicyAssignmentId '$($vmAssignment.Id)'  -Scope '$AssignmentScope' -ResourceDiscoveryMode ReEvaluateCompliance"
+}
