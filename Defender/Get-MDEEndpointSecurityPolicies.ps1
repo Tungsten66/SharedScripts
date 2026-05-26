@@ -194,157 +194,54 @@ catch {
     exit 1
 }
 
-# Connect to Microsoft Graph.
-# Strategy (preserves backward-compatible silent auth for tenants where the
-# Azure CLI app already has the required Graph scopes consented):
-#   1. Try the Azure CLI access token first. Inspect the token's 'scp' claim
-#      to confirm it actually carries the required scopes - some tenants have
-#      consented them to the Azure CLI app (clientId 04b07795-...), others
-#      have not.
-#   2. If the CLI token is missing any required scope, fall back to
-#      interactive 'Connect-MgGraph -Scopes ...' using the Microsoft Graph
-#      PowerShell app, which supports on-the-fly admin consent.
-# Net effect: customers with a consented Azure CLI app get the same silent
-# experience as before; everyone else gets a working (interactive) fallback.
-Write-Host "`nConnecting to Microsoft Graph..." -ForegroundColor Cyan
+# Connect to Microsoft Graph using Azure CLI token
+Write-Host "`nConnecting to Microsoft Graph using Azure CLI token..." -ForegroundColor Cyan
 
-$requiredScopes = @(
-    'DeviceManagementConfiguration.Read.All',
-    'DeviceManagementEndpointSecurity.Read.All',
-    'Group.Read.All'
-)
-
-# Helper: decode the 'scp' (delegated scopes) claim from a JWT access token
-function Get-JwtScopes {
-    param([string]$Token)
-    try {
-        $payload = $Token.Split('.')[1]
-        switch ($payload.Length % 4) {
-            2 { $payload += '==' }
-            3 { $payload += '='  }
-        }
-        $payload = $payload.Replace('-', '+').Replace('_', '/')
-        $json = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload))
-        $claims = $json | ConvertFrom-Json
-        if ($claims.scp) { return ($claims.scp -split ' ') }
-        return @()
-    }
-    catch {
-        return @()
-    }
-}
-
-# Check if already connected with the required scopes
+# Check if already connected
 $existingContext = Get-MgContext -ErrorAction SilentlyContinue
-$hasRequiredScopes = $false
 if ($existingContext) {
-    $missing = $requiredScopes | Where-Object { $existingContext.Scopes -notcontains $_ }
-    $hasRequiredScopes = ($missing.Count -eq 0)
-    if ($hasRequiredScopes) {
-        Write-Host "Already connected to Microsoft Graph with required scopes" -ForegroundColor Green
-        Write-Host "Account: $($existingContext.Account)" -ForegroundColor Gray
-    }
-    else {
-        Write-Host "Existing Graph session is missing scopes: $($missing -join ', ')" -ForegroundColor Yellow
-        Write-Host "Reconnecting..." -ForegroundColor Yellow
-        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
-    }
+    Write-Host "Already connected to Microsoft Graph" -ForegroundColor Green
+    Write-Host "Account: $($existingContext.Account)" -ForegroundColor Gray
 }
-
-if (-not $hasRequiredScopes) {
-    # --- Attempt 1: Azure CLI token (silent if CLI app has scopes consented) ---
-    $cliTokenUsed = $false
+else {
     try {
-        Write-Host "Attempting silent auth via Azure CLI access token..." -ForegroundColor Gray
-        $token = az account get-access-token --resource-type ms-graph --query accessToken -o tsv 2>$null
+        # Get access token from Azure CLI for the correct cloud
+        $token = az account get-access-token --resource-type ms-graph --query accessToken -o tsv
 
-        if (-not [string]::IsNullOrWhiteSpace($token)) {
-            $tokenScopes  = Get-JwtScopes -Token $token
-            $tokenMissing = $requiredScopes | Where-Object { $tokenScopes -notcontains $_ }
-
-            if ($tokenMissing.Count -eq 0) {
-                $secureToken = ConvertTo-SecureString $token -AsPlainText -Force
-                Clear-Variable -Name token -ErrorAction SilentlyContinue
-                Connect-MgGraph -AccessToken $secureToken -Environment $graphEnvironment -NoWelcome -ErrorAction Stop
-                Clear-Variable -Name secureToken -ErrorAction SilentlyContinue
-                Write-Host "Connected via Azure CLI token (silent)" -ForegroundColor Green
-                $cliTokenUsed      = $true
-                $hasRequiredScopes = $true
-            }
-            else {
-                Write-Host "Azure CLI token is missing scopes: $($tokenMissing -join ', ')" -ForegroundColor Yellow
-                Write-Host "Falling back to interactive Microsoft Graph sign-in..." -ForegroundColor Yellow
-                Clear-Variable -Name token -ErrorAction SilentlyContinue
-            }
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            throw "Failed to retrieve access token from Azure CLI"
         }
+
+        # Convert token to SecureString
+        $secureToken = ConvertTo-SecureString $token -AsPlainText -Force
+
+        # Connect to Microsoft Graph with the token and correct environment
+        Connect-MgGraph -AccessToken $secureToken -Environment $graphEnvironment -NoWelcome -ErrorAction Stop
+
+        # Clear SecureString token from memory after successful connection
+        Clear-Variable -Name secureToken -ErrorAction SilentlyContinue
+
+        Write-Host "Successfully connected to Microsoft Graph" -ForegroundColor Green
     }
     catch {
-        Write-Host "Azure CLI token auth failed ($($_.Exception.Message)); falling back to interactive sign-in." -ForegroundColor Yellow
+        Write-Error "Failed to connect to Microsoft Graph: $_"
+        Write-Host "`nTroubleshooting:" -ForegroundColor Yellow
+        Write-Host "  - Ensure you have the required permissions (DeviceManagementConfiguration.Read.All, DeviceManagementEndpointSecurity.Read.All, Group.Read.All)" -ForegroundColor White
+        Write-Host "  - Verify your Azure CLI session is active: az account show" -ForegroundColor White
+        Write-Host "  - Try logging in again: az login" -ForegroundColor White
+        Write-Host "`nIf you continue to see login prompts, the app may need admin consent for the required permissions." -ForegroundColor Yellow
+        exit 1
     }
-
-    # --- Attempt 2: Interactive Connect-MgGraph (Microsoft Graph PowerShell app) ---
-    if (-not $cliTokenUsed) {
-        try {
-            Connect-MgGraph -Scopes $requiredScopes -Environment $graphEnvironment -NoWelcome -ErrorAction Stop
-            Write-Host "Connected to Microsoft Graph (interactive)" -ForegroundColor Green
-            $hasRequiredScopes = $true
-        }
-        catch {
-            Write-Error "Failed to connect to Microsoft Graph: $_"
-            Write-Host "`nTroubleshooting:" -ForegroundColor Yellow
-            Write-Host "  - On first run, an admin must consent to the requested scopes:" -ForegroundColor White
-            Write-Host "    $($requiredScopes -join ', ')" -ForegroundColor White
-            Write-Host "  - For headless / no-browser sessions, run once interactively:" -ForegroundColor White
-            Write-Host "    Connect-MgGraph -Scopes '$(($requiredScopes) -join "','")' -UseDeviceCode" -ForegroundColor White
-            exit 1
-        }
-    }
-
-    $ctx = Get-MgContext
-    Write-Host "Account: $($ctx.Account)" -ForegroundColor Gray
 }
 
 # Acquire a raw Graph bearer token for parallel runspaces. ForEach-Object
 # -Parallel runs each script block in its own runspace and does NOT share
 # the MgGraph connection / $script: variables, so workers need to call Graph
 # directly via Invoke-RestMethod with an Authorization header.
-#
-# Source priority:
-#   1. The active MgGraph session - this token always carries the scopes we
-#      just consented to (including the interactive fallback path). Extracted
-#      by making a trivial Invoke-MgGraphRequest and reading the Authorization
-#      header off the outbound HttpRequestMessage.
-#   2. The Azure CLI 'ms-graph' token - works when the Azure CLI app already
-#      has the required Graph scopes consented (skipped otherwise).
-#
-# After acquisition we validate the token's 'scp' claim contains every required
-# scope. If any are missing we discard it and fall back to serial mode rather
-# than silently issuing parallel calls that 403 and return empty.
 $script:graphBearerToken = $null
-
 try {
-    $resp = Invoke-MgGraphRequest -Method GET -Uri "$script:graphEndpoint/v1.0/`$metadata" -OutputType HttpResponseMessage -ErrorAction Stop
-    if ($resp -and $resp.RequestMessage -and $resp.RequestMessage.Headers.Authorization) {
-        $script:graphBearerToken = $resp.RequestMessage.Headers.Authorization.Parameter
-    }
-} catch {
-    Write-Verbose "Could not extract token from MgGraph session: $($_.Exception.Message)"
-}
-
-if ([string]::IsNullOrWhiteSpace($script:graphBearerToken)) {
-    try {
-        $script:graphBearerToken = az account get-access-token --resource-type ms-graph --query accessToken -o tsv 2>$null
-    } catch { }
-}
-
-if (-not [string]::IsNullOrWhiteSpace($script:graphBearerToken)) {
-    $tokScopes  = Get-JwtScopes -Token $script:graphBearerToken
-    $tokMissing = $requiredScopes | Where-Object { $tokScopes -notcontains $_ }
-    if ($tokMissing.Count -gt 0) {
-        Write-Host ("Bearer token for parallel workers is missing scopes ({0}); falling back to serial per-setting fetch." -f ($tokMissing -join ', ')) -ForegroundColor Yellow
-        $script:graphBearerToken = $null
-    }
-}
+    $script:graphBearerToken = az account get-access-token --resource-type ms-graph --query accessToken -o tsv 2>$null
+} catch { }
 
 if ([string]::IsNullOrWhiteSpace($script:graphBearerToken)) {
     Write-Host "No usable Graph bearer token; parallel per-setting fetch will fall back to serial mode." -ForegroundColor Yellow
