@@ -142,8 +142,11 @@ CRON_FILE="/etc/cron.d/mdatp-mirror"
 # Logrotate config
 LOGROTATE_CONF="/etc/logrotate.d/mdatp-mirror"
 
-# Minimum free disk space required on DOWNLOAD_DIR partition (in KB)
-REQUIRED_KB=$(( 4 * 1024 * 1024 ))   # 4 GB
+# Minimum free disk space required on DOWNLOAD_DIR partition (in KB).
+# Microsoft's documented minimum is 2 GB. We require 3 GB to leave headroom
+# for two full signature sets (current + backup) plus logs. Note: a 4 GiB disk
+# formatted with XFS will show ~3 GB available after filesystem overhead.
+REQUIRED_KB=$(( 3 * 1024 * 1024 ))   # 3 GB
 
 # =============================================================================
 # HELPERS
