@@ -68,6 +68,7 @@
 #     DateCreated: 2026-06-24
 #     Revisions:
 #       2026-06-24 — Initial version
+#       2026-06-24 — Fixed nginx limit_except placement (must be inside location block, not server block)
 #
 # =============================================================================
 # mde-offline-mirror-setup.sh
@@ -92,9 +93,24 @@
 #     in the Defender/Intune portal (printed at the end of this script)
 #
 # Usage:
-#   bash mde-offline-mirror-setup.sh
+#   Step 1 — Download the script to the target RHEL server:
+#     curl -fsSL https://raw.githubusercontent.com/Tungsten66/SharedScripts/refs/heads/main/Defender/mde-offline-security-intelligence-mirror-rhel.sh \
+#       -o /tmp/mde-offline-security-intelligence-mirror-rhel.sh
 #
-# Do NOT source this script (. or source) — it will protect you from that below.
+#   Step 2 — Review the CONFIGURATION section at the top of the script and
+#             adjust any paths if your environment differs from the defaults.
+#
+#   Step 3 — Run the script as root:
+#     sudo bash /tmp/mde-offline-security-intelligence-mirror-rhel.sh
+#
+#   Prerequisites before running:
+#     - RHEL 8.x or 9.x
+#     - Outbound internet access to github.com and go.microsoft.com
+#     - A dedicated data disk mounted at /opt/wdav-update with >= 3 GB free
+#       (a 4 GiB Azure data disk formatted with XFS is sufficient)
+#     - MDE (mdatp) already installed at version >= 101.24022.0001
+#
+#   Do NOT pipe directly from curl | bash — download first, then run.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -104,7 +120,7 @@
 # This guard detects sourcing and returns instead of exiting, keeping the
 # shell alive while still aborting the script.
 # -----------------------------------------------------------------------------
-if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+if [[ -n "${BASH_SOURCE[0]}" && "${BASH_SOURCE[0]}" != "${0}" ]]; then
     echo "ERROR: Do not source this script. Run it directly:"
     echo "  bash $(basename "${BASH_SOURCE[0]}")"
     return 1
@@ -350,26 +366,20 @@ server {
     # Allow directory listing so MDE can discover arch_* subdirectories.
     autoindex on;
 
-    # Restrict to read-only HTTP methods — this is a static file mirror,
-    # no uploads or modifications should ever be accepted.
-    limit_except GET HEAD {
-        deny all;
-    }
-
-    # Do not expose the nginx version in Server headers or error pages.
-    # Reduces attack surface by preventing version-targeted exploits.
-    server_tokens off;
-
-    # Prevent MIME-type sniffing by browsers or intermediaries.
-    add_header X-Content-Type-Options "nosniff" always;
-
-    # Deny framing — not strictly needed for a file server, but follows
-    # the RHEL/CIS nginx hardening baseline.
-    add_header X-Frame-Options "DENY" always;
-
     # MDE endpoints request: http://<mirror-IP>/linux/production/
     location /linux/production/ {
-        # No additional config needed — served from root above.
+        # Restrict to read-only HTTP methods — this is a static file mirror,
+        # no uploads or modifications should ever be accepted.
+        limit_except GET HEAD {
+            deny all;
+        }
+    }
+
+    location / {
+        # Restrict root to read-only as well.
+        limit_except GET HEAD {
+            deny all;
+        }
     }
 
     access_log /var/log/nginx/wdav-update-access.log;
