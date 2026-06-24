@@ -48,9 +48,19 @@
 #       - logrotate configuration
 #
 # .INPUTS
-#     None. All configuration is defined in the CONFIGURATION section at the
-#     top of the script. Edit those variables before running if your environment
-#     differs from the defaults.
+#     --mode       Required. Either 'lab' or 'production'.
+#
+#     Lab mode (--mode lab):
+#       HTTP only, firewall open to all interfaces, 3 GB disk check.
+#       No additional parameters required.
+#
+#     Production mode (--mode production):
+#       HTTPS, subnet-scoped firewall, 8 GB disk check.
+#       Requires:
+#         --hostname   FQDN or internal hostname of this server (must match TLS cert CN)
+#         --subnet     CIDR subnet of MDE endpoints (e.g. 10.0.1.0/24)
+#         --cert       Path to TLS certificate file (from your internal CA)
+#         --key        Path to TLS private key file
 #
 # .OUTPUTS
 #     On success, prints the mirror URL and Defender portal policy settings
@@ -69,6 +79,8 @@
 #     Revisions:
 #       2026-06-24 — Initial version
 #       2026-06-24 — Fixed nginx limit_except placement (must be inside location block, not server block)
+#       2026-06-24 — Removed default_server from nginx listen directive (conflicts with RHEL 8/9 default nginx.conf)
+#       2026-06-24 — Replaced static CONFIGURATION section with --mode lab|production argument parsing
 #
 # =============================================================================
 # mde-offline-mirror-setup.sh
@@ -97,18 +109,25 @@
 #     curl -fsSL https://raw.githubusercontent.com/Tungsten66/SharedScripts/refs/heads/main/Defender/mde-offline-security-intelligence-mirror-rhel.sh \
 #       -o /tmp/mde-offline-security-intelligence-mirror-rhel.sh
 #
-#   Step 2 — Review the CONFIGURATION section at the top of the script and
-#             adjust any paths if your environment differs from the defaults.
+#   Step 2 — Run the script as root with the appropriate mode:
 #
-#   Step 3 — Run the script as root:
-#     sudo bash /tmp/mde-offline-security-intelligence-mirror-rhel.sh
+#     Lab:
+#       sudo bash /tmp/mde-offline-security-intelligence-mirror-rhel.sh --mode lab
+#
+#     Production:
+#       sudo bash /tmp/mde-offline-security-intelligence-mirror-rhel.sh --mode production \
+#         --hostname mde-mirror.yourdomain.internal \
+#         --subnet 10.0.1.0/24 \
+#         --cert /etc/nginx/ssl/wdav.crt \
+#         --key /etc/nginx/ssl/wdav.key
 #
 #   Prerequisites before running:
 #     - RHEL 8.x or 9.x
 #     - Outbound internet access to github.com and go.microsoft.com
 #     - A dedicated data disk mounted at /opt/wdav-update with >= 3 GB free
-#       (a 4 GiB Azure data disk formatted with XFS is sufficient)
+#       (a 4 GiB Azure data disk formatted with XFS is sufficient for lab)
 #     - MDE (mdatp) already installed at version >= 101.24022.0001
+#     - Production mode: TLS cert/key from your internal CA placed on the server
 #
 #   Do NOT pipe directly from curl | bash — download first, then run.
 # =============================================================================
@@ -129,40 +148,106 @@ fi
 set -euo pipefail
 
 # =============================================================================
-# CONFIGURATION — edit these if your environment differs
+# FIXED CONFIGURATION — paths that do not change between modes
 # =============================================================================
 
-# Microsoft mdatp-xplat repo (do not change unless Microsoft moves it)
 REPO_URL="https://github.com/microsoft/mdatp-xplat.git"
 REPO_DIR="/opt/mdatp-xplat"
-
-# Where signatures are downloaded to (must be on a disk with >= 4 GB free)
-# This path is also the nginx web root.
 DOWNLOAD_DIR="/opt/wdav-update"
-
-# Diagnostic log for the downloader script
 DOWNLOADER_LOG="/var/log/mdatp-offline-update/downloader.log"
-
-# Cron/stdout log
 CRON_LOG="/var/log/mdatp-offline-update/cron.log"
-
-# Dedicated service account — runs the downloader cron, owns the files
 MIRROR_USER="mdatp-mirror"
-
-# nginx virtual host config file
 NGINX_CONF="/etc/nginx/conf.d/wdav-update.conf"
-
-# Cron job file
 CRON_FILE="/etc/cron.d/mdatp-mirror"
-
-# Logrotate config
 LOGROTATE_CONF="/etc/logrotate.d/mdatp-mirror"
 
-# Minimum free disk space required on DOWNLOAD_DIR partition (in KB).
-# Microsoft's documented minimum is 2 GB. We require 3 GB to leave headroom
-# for two full signature sets (current + backup) plus logs. Note: a 4 GiB disk
-# formatted with XFS will show ~3 GB available after filesystem overhead.
-REQUIRED_KB=$(( 3 * 1024 * 1024 ))   # 3 GB
+# =============================================================================
+# ARGUMENT PARSING
+# =============================================================================
+
+usage() {
+    echo ""
+    echo "Usage:"
+    echo "  Lab:"
+    echo "    sudo bash $(basename "$0") --mode lab"
+    echo ""
+    echo "  Production:"
+    echo "    sudo bash $(basename "$0") --mode production \\"
+    echo "      --hostname mde-mirror.yourdomain.internal \\"
+    echo "      --subnet 10.0.1.0/24 \\"
+    echo "      --cert /etc/nginx/ssl/wdav.crt \\"
+    echo "      --key /etc/nginx/ssl/wdav.key"
+    echo ""
+    exit 1
+}
+
+MODE=""
+SERVER_NAME="_"
+FIREWALL_SOURCE_SUBNET=""
+ENABLE_HTTPS=false
+TLS_CERT="/etc/nginx/ssl/wdav-update.crt"
+TLS_KEY="/etc/nginx/ssl/wdav-update.key"
+CRON_SCHEDULE="0 */8 * * *"   # Microsoft default: every 8 hours
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode)        MODE="$2";                   shift 2 ;;
+        --hostname)    SERVER_NAME="$2";             shift 2 ;;
+        --subnet)      FIREWALL_SOURCE_SUBNET="$2";  shift 2 ;;
+        --cert)        TLS_CERT="$2";                shift 2 ;;
+        --key)         TLS_KEY="$2";                 shift 2 ;;
+        --cron)        CRON_SCHEDULE="$2";           shift 2 ;;
+        -h|--help)     usage ;;
+        *)             echo "Unknown option: $1"; usage ;;
+    esac
+done
+
+# Validate mode
+if [[ -z "$MODE" ]]; then
+    echo "ERROR: --mode is required (lab or production)"
+    usage
+fi
+
+if [[ "$MODE" == "lab" ]]; then
+    ENABLE_HTTPS=false
+    REQUIRED_KB=$(( 3 * 1024 * 1024 ))   # 3 GB — sufficient for a 4 GiB XFS disk
+    echo ""
+    echo "  Mode: LAB"
+    echo "  Transport: HTTP (port 80, open to all interfaces)"
+    echo "  Disk check: 3 GB"
+    echo "  Firewall: open to all"
+    echo ""
+
+elif [[ "$MODE" == "production" ]]; then
+    ENABLE_HTTPS=true
+    REQUIRED_KB=$(( 8 * 1024 * 1024 ))   # 8 GB — production disk headroom
+
+    # Production requires all four additional parameters
+    PROD_ERRORS=()
+    [[ "$SERVER_NAME" == "_" ]]              && PROD_ERRORS+=("--hostname is required in production mode")
+    [[ -z "$FIREWALL_SOURCE_SUBNET" ]]       && PROD_ERRORS+=("--subnet is required in production mode")
+    [[ ! -f "$TLS_CERT" ]]                   && PROD_ERRORS+=("--cert file not found: ${TLS_CERT}")
+    [[ ! -f "$TLS_KEY" ]]                    && PROD_ERRORS+=("--key file not found: ${TLS_KEY}")
+
+    if [[ ${#PROD_ERRORS[@]} -gt 0 ]]; then
+        echo "ERROR: Production mode is missing required parameters:"
+        for e in "${PROD_ERRORS[@]}"; do echo "  - $e"; done
+        usage
+    fi
+
+    echo ""
+    echo "  Mode: PRODUCTION"
+    echo "  Transport: HTTPS (port 443)"
+    echo "  Hostname:  ${SERVER_NAME}"
+    echo "  Subnet:    ${FIREWALL_SOURCE_SUBNET}"
+    echo "  Cert:      ${TLS_CERT}"
+    echo "  Key:       ${TLS_KEY}"
+    echo "  Disk check: 8 GB"
+    echo ""
+else
+    echo "ERROR: --mode must be 'lab' or 'production', got: ${MODE}"
+    usage
+fi
 
 # =============================================================================
 # HELPERS
@@ -348,35 +433,74 @@ info "Phase 6: Configuring nginx"
 # packages regardless of transport protocol, so the payload cannot be tampered
 # with over HTTP. However, HTTP does not protect the connection itself.
 #
-# To enable HTTPS:
-#   1. Obtain a certificate from your internal CA for this server's hostname/IP
-#   2. Place the cert and key under /etc/nginx/ssl/
-#   3. Change "listen 80" to "listen 443 ssl" and add ssl_certificate directives
-#   4. Add a port 80 → 443 redirect block
+# To switch to HTTPS: set ENABLE_HTTPS=true in the CONFIGURATION section at
+# the top of this script, provide your cert/key paths, and re-run.
 # ─────────────────────────────────────────────────────────────────────────────
 
-cat > "$NGINX_CONF" <<'NGINXCONF'
+if [[ "$ENABLE_HTTPS" == "true" ]]; then
+    if [[ ! -f "$TLS_CERT" || ! -f "$TLS_KEY" ]]; then
+        error "ENABLE_HTTPS=true but cert/key not found at ${TLS_CERT} / ${TLS_KEY}. Provide a cert from your internal CA before enabling HTTPS."
+    fi
+    mkdir -p /etc/nginx/ssl
+    cat > "$NGINX_CONF" <<NGINXCONF
+# Redirect HTTP to HTTPS
 server {
-    # HTTP for testing only — see inline comment above for HTTPS guidance.
-    listen 80 default_server;
+    listen 80;
+    server_name _;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
     server_name _;
 
-    root /opt/wdav-update;
+    ssl_certificate     ${TLS_CERT};
+    ssl_certificate_key ${TLS_KEY};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
 
-    # Allow directory listing so MDE can discover arch_* subdirectories.
+    root ${DOWNLOAD_DIR};
     autoindex on;
+    server_tokens off;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+
+    location /linux/production/ {
+        limit_except GET HEAD { deny all; }
+    }
+    location / {
+        limit_except GET HEAD { deny all; }
+    }
+
+    access_log /var/log/nginx/wdav-update-access.log;
+    error_log  /var/log/nginx/wdav-update-error.log;
+}
+NGINXCONF
+else
+    cat > "$NGINX_CONF" <<NGINXCONF
+server {
+    # HTTP for testing only — set ENABLE_HTTPS=true in the CONFIGURATION
+    # section at the top of this script to switch to HTTPS for production.
+    # Note: 'default_server' is omitted because RHEL 8/9's default nginx.conf
+    # already declares a default_server on port 80.
+    listen 80;
+    server_name _;
+
+    root ${DOWNLOAD_DIR};
+    autoindex on;
+    server_tokens off;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
 
     # MDE endpoints request: http://<mirror-IP>/linux/production/
     location /linux/production/ {
-        # Restrict to read-only HTTP methods — this is a static file mirror,
-        # no uploads or modifications should ever be accepted.
+        # Restrict to read-only HTTP methods — static file mirror only.
         limit_except GET HEAD {
             deny all;
         }
     }
 
     location / {
-        # Restrict root to read-only as well.
         limit_except GET HEAD {
             deny all;
         }
@@ -386,6 +510,7 @@ server {
     error_log  /var/log/nginx/wdav-update-error.log;
 }
 NGINXCONF
+fi
 
 # Test nginx config before enabling
 nginx -t 2>/dev/null || error "nginx configuration test failed. Check ${NGINX_CONF}."
@@ -434,9 +559,33 @@ info "Phase 8: Configuring firewalld"
 # ─────────────────────────────────────────────────────────────────────────────
 
 if systemctl is-active --quiet firewalld; then
-    firewall-cmd --permanent --add-service=http &>/dev/null
-    firewall-cmd --reload &>/dev/null
-    success "firewalld: HTTP (port 80) opened on all interfaces"
+    if [[ -n "$FIREWALL_SOURCE_SUBNET" ]]; then
+        # Production: scope access to the MDE endpoint subnet only.
+        # This prevents any host outside the specified subnet from reaching the mirror.
+        firewall-cmd --permanent --zone=internal --add-source="$FIREWALL_SOURCE_SUBNET" &>/dev/null
+        if [[ "$ENABLE_HTTPS" == "true" ]]; then
+            firewall-cmd --permanent --zone=internal --add-service=https &>/dev/null
+            firewall-cmd --permanent --zone=internal --add-service=http &>/dev/null  # for 80→443 redirect
+        else
+            firewall-cmd --permanent --zone=internal --add-service=http &>/dev/null
+        fi
+        firewall-cmd --reload &>/dev/null
+        success "firewalld: access restricted to subnet ${FIREWALL_SOURCE_SUBNET}"
+    else
+        # ─────────────────────────────────────────────────────────────────────
+        # SECURITY NOTE — Port 80 is opened to ALL source addresses (lab mode).
+        # In production, pass --subnet <CIDR> to restrict access to only the
+        # subnet containing your MDE-managed Linux endpoints.
+        # ─────────────────────────────────────────────────────────────────────
+        if [[ "$ENABLE_HTTPS" == "true" ]]; then
+            firewall-cmd --permanent --add-service=https &>/dev/null
+            firewall-cmd --permanent --add-service=http &>/dev/null  # for 80→443 redirect
+        else
+            firewall-cmd --permanent --add-service=http &>/dev/null
+        fi
+        firewall-cmd --reload &>/dev/null
+        success "firewalld: HTTP/HTTPS opened on all interfaces (lab mode)"
+    fi
 else
     warn "firewalld is not running — skipping firewall configuration"
 fi
@@ -492,13 +641,13 @@ info "Phase 12: Installing cron job"
 # Does a git pull first to keep the downloader script itself current,
 # then runs the download script as the mdatp-mirror service account.
 cat > "$CRON_FILE" <<EOF
-# MDE offline security intelligence mirror — updates every 8 hours
+# MDE offline security intelligence mirror — updates on schedule: ${CRON_SCHEDULE}
 # Matches the default endpoint pull interval (definitionUpdatesInterval: 28800s).
-# Adjust the schedule here if your security policy requires more frequent updates.
+# Override schedule at runtime with --cron "0 */4 * * *" if needed.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 
-0 */8 * * *  ${MIRROR_USER}  cd ${REPO_DIR} && git pull -q && bash ${SCRIPT_PATH} >> ${CRON_LOG} 2>&1
+${CRON_SCHEDULE}  ${MIRROR_USER}  cd ${REPO_DIR} && git pull -q || echo "WARNING: git pull failed, using existing script" && bash ${SCRIPT_PATH} >> ${CRON_LOG} 2>&1
 EOF
 
 chmod 644 "$CRON_FILE"
@@ -532,14 +681,18 @@ fi
 # =============================================================================
 
 SERVER_IP=$(hostname -I | awk '{print $1}')
+PROTOCOL="http"
+[[ "$ENABLE_HTTPS" == "true" ]] && PROTOCOL="https"
+MIRROR_URL="${PROTOCOL}://${SERVER_IP}/linux/production/"
+[[ "$SERVER_NAME" != "_" ]] && MIRROR_URL="${PROTOCOL}://${SERVER_NAME}/linux/production/"
 
 echo ""
 echo "============================================================"
-echo " MDE Offline Mirror Setup Complete"
+echo " MDE Offline Mirror Setup Complete (mode: ${MODE})"
 echo "============================================================"
 echo ""
 echo " Mirror URL (use this in Defender portal policy):"
-echo "   http://${SERVER_IP}/linux/production/"
+echo "   ${MIRROR_URL}"
 echo ""
 echo " NEXT STEPS — Defender Portal:"
 echo "   Endpoints > Configuration management > Endpoint security policies"
@@ -548,7 +701,7 @@ echo ""
 echo "   Setting                                   Value"
 echo "   ─────────────────────────────────────────────────────────"
 echo "   Enable offline security intelligence      true"
-echo "   Offline update URL or directory           http://${SERVER_IP}/linux/production/"
+echo "   Offline update URL or directory           ${MIRROR_URL}"
 echo "   Fallback to cloud                         false"
 echo "   Update time interval (seconds)            28800"
 echo "   Automated security intelligence updates   true (required)"
