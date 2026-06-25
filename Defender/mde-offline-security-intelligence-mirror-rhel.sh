@@ -72,6 +72,40 @@
 #       /var/log/nginx/wdav-update-access.log          — nginx access log
 #       /var/log/nginx/wdav-update-error.log           — nginx error log
 #
+# .PORTAL CONFIGURATION
+#     After running this script, configure the MDE endpoints via the Defender
+#     portal using the Security Settings Management policy. Follow the steps
+#     under "Configure the endpoints > Portal" in the Microsoft documentation:
+#     https://learn.microsoft.com/en-us/defender-endpoint/linux-support-offline-security-intelligence-update?tabs=portal#configure-the-endpoints
+#
+#     The mirror URL to enter in the policy is printed at the end of this script.
+#     Key settings:
+#       - Enable offline security intelligence update:        Enabled
+#       - Offline security intelligence update URL:           <printed by script>
+#       - Offline security intelligence update fallback to cloud: False
+#       - Security intelligence update time interval (sec):  28800
+#       - Automated security intelligence updates:           Enabled (required)
+#
+# .VERIFICATION
+#     After the Defender portal policy applies to the endpoint, verify with:
+#
+#       mdatp health --details definitions
+#
+#     Success looks like:
+#       automatic_definition_update_enabled         : true [managed]
+#       definitions_status                          : "up_to_date"
+#       offline_definition_update                   : "enabled" [managed]
+#       offline_definition_url_configured           : "http://<mirror-IP>/linux/production/" [managed]
+#       offline_definition_update_fallback_to_cloud : false [managed]
+#       offline_definition_update_verify_sig        : "enabled"
+#
+#     To trigger a manual update from the mirror:
+#       mdatp definitions update
+#
+#     To confirm the update sourced from the mirror (not Microsoft cloud):
+#       mdatp health --field definitions_update_source_uri
+#     Expected: your mirror URL, not https://mdav.us.endpoint.security.microsoft.com/...
+#
 # .NOTES
 #     Name: mde-offline-security-intelligence-mirror-rhel.sh
 #     Authors/Contributors: Nick OConnor
@@ -81,6 +115,8 @@
 #       2026-06-24 — Fixed nginx limit_except placement (must be inside location block, not server block)
 #       2026-06-24 — Removed default_server from nginx listen directive (conflicts with RHEL 8/9 default nginx.conf)
 #       2026-06-24 — Replaced static CONFIGURATION section with --mode lab|production argument parsing
+#       2026-06-25 — Fixed nginx 404: strip default_server from nginx.conf, chmod 755 on download dir, reapply SELinux context in cron
+#       2026-06-25 — Replaced chcon with semanage fcontext for permanent SELinux context (new files inherit automatically)
 #
 # =============================================================================
 # mde-offline-mirror-setup.sh
@@ -343,6 +379,17 @@ fi
 dnf install -y git nginx &>/dev/null
 success "git and nginx installed"
 
+# Remove 'default_server' from the RHEL default nginx.conf server block.
+# RHEL ships nginx.conf with 'listen 80 default_server' which conflicts with
+# our vhost — nginx will ignore our vhost and serve from /usr/share/nginx/html,
+# returning 404 for all requests to /opt/wdav-update. Stripping default_server
+# lets our vhost in conf.d/ win the request routing.
+if grep -q "default_server" /etc/nginx/nginx.conf; then
+    sed -i 's/listen       80 default_server;/listen       80;/' /etc/nginx/nginx.conf
+    sed -i 's/listen       \[::\]:80 default_server;/listen       [::]:80;/' /etc/nginx/nginx.conf
+    info "Removed default_server from /etc/nginx/nginx.conf"
+fi
+
 # =============================================================================
 # PHASE 3 — CLONE / UPDATE MICROSOFT DOWNLOADER REPO
 # =============================================================================
@@ -403,9 +450,10 @@ LOG_DIR=$(dirname "$DOWNLOADER_LOG")
 mkdir -p "$DOWNLOAD_DIR" "$LOG_DIR"
 
 # nginx needs read access to the download directory to serve files.
-# mdatp-mirror owns the files; nginx group is granted read via group membership.
+# 755 allows the nginx user (not in mdatp-mirror group) to traverse and read.
+# SELinux context httpd_sys_content_t is also required — applied in Phase 7.
 chown -R "${MIRROR_USER}:nginx" "$DOWNLOAD_DIR"
-chmod -R 750 "$DOWNLOAD_DIR"
+chmod -R 755 "$DOWNLOAD_DIR"
 
 chown -R "${MIRROR_USER}:${MIRROR_USER}" "$LOG_DIR"
 chmod 750 "$LOG_DIR"
@@ -523,17 +571,26 @@ success "nginx configured and config test passed"
 info "Phase 7: Applying SELinux contexts"
 
 if command -v getenforce &>/dev/null && [[ "$(getenforce)" != "Disabled" ]]; then
-    # httpd_sys_content_t allows nginx (running in the httpd_t domain) to read
-    # the files in DOWNLOAD_DIR. Without this, SELinux will silently deny nginx
-    # read access even though filesystem permissions allow it.
-    chcon -R -t httpd_sys_content_t "$DOWNLOAD_DIR"
+    # Install policycoreutils-python-utils if needed (provides semanage)
+    if ! command -v semanage &>/dev/null; then
+        dnf install -y policycoreutils-python-utils &>/dev/null
+    fi
+
+    # Set a permanent default file context so ALL future files created under
+    # DOWNLOAD_DIR (by the cron downloader) automatically get httpd_sys_content_t.
+    # This is the correct production approach — chcon only relabels existing files
+    # and does not persist for new files created after each signature download.
+    semanage fcontext -a -t httpd_sys_content_t "${DOWNLOAD_DIR}(/.*)?" 2>/dev/null || \
+    semanage fcontext -m -t httpd_sys_content_t "${DOWNLOAD_DIR}(/.*)?"
+
+    # Apply the policy to existing files now
     restorecon -R "$DOWNLOAD_DIR"
 
     # nginx does not need outbound network connections — only serves files.
     # Turning this off limits what nginx can do if compromised.
     setsebool -P httpd_can_network_connect off
 
-    success "SELinux contexts applied (httpd_sys_content_t)"
+    success "SELinux permanent context policy set (httpd_sys_content_t) — new files will inherit automatically"
 else
     warn "SELinux is disabled or not present — skipping context changes"
 fi
@@ -647,7 +704,7 @@ cat > "$CRON_FILE" <<EOF
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 
-${CRON_SCHEDULE}  ${MIRROR_USER}  cd ${REPO_DIR} && git pull -q || echo "WARNING: git pull failed, using existing script" && bash ${SCRIPT_PATH} >> ${CRON_LOG} 2>&1
+${CRON_SCHEDULE}  ${MIRROR_USER}  cd ${REPO_DIR} && git pull -q || echo "WARNING: git pull failed, using existing script" && bash ${SCRIPT_PATH} >> ${CRON_LOG} 2>&1 && chmod -R 755 ${DOWNLOAD_DIR} && restorecon -R ${DOWNLOAD_DIR}
 EOF
 
 chmod 644 "$CRON_FILE"
